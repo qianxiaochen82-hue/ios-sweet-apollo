@@ -1,0 +1,25 @@
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index 0eef989..260d9e2 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -656,8 +656,18 @@ kernel_bootstrap_thread(void)
+ 
+ #if MACH_KDP
+ 	kernel_bootstrap_log("kdp_init");
+-	kdp_init();
+-	kprintf("SWEET STAGE: kdp_init done\n");
++	{
++		int sweet_nokdp = 0;
++		if (!PE_parse_boot_argn("sweetnokdp", &sweet_nokdp, sizeof(sweet_nokdp))) {
++			sweet_nokdp = 0;
++		}
++		if (sweet_nokdp) {
++			kprintf("SWEET STAGE: kdp_init skipped (sweetnokdp=1)\n");
++		} else {
++			kdp_init();
++			kprintf("SWEET STAGE: kdp_init done\n");
++		}
++	}
+ #endif
+ 
+ #if ALTERNATE_DEBUGGER
