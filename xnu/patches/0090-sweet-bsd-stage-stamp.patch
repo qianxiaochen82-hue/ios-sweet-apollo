@@ -1,5 +1,5 @@
 diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
-index ef64824..f6424a3 100644
+index cdd5aad..e9c0969 100644
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
 @@ -473,6 +473,263 @@ bsd_rooted_ramdisk(void)
@@ -284,7 +284,7 @@ index ef64824..f6424a3 100644
  
  #define DEBUG_BSDINIT 1
  
-@@ -718,6 +979,7 @@ bsd_init(void)
+@@ -712,6 +973,7 @@ bsd_init(void)
  	extern void sweet_hfs_register(void);
  	sweet_hfs_register();
  #endif
@@ -292,7 +292,7 @@ index ef64824..f6424a3 100644
  
  #if CONFIG_PROC_UUID_POLICY
  	/* Initial proc_uuid_policy subsystem */
-@@ -889,12 +1151,19 @@ bsd_init(void)
+@@ -883,15 +1145,22 @@ bsd_init(void)
  		int err;
  
  		bsd_init_kprintf("calling setconf\n");
@@ -312,7 +312,10 @@ index ef64824..f6424a3 100644
  		}
 +		sweet_stamp_block_at(2, (unsigned)err & 15u, 0xffff0000u);
 +		sweet_vfs_err(err);
-@@ -967,6 +1236,8 @@ bsd_init(void)
+ 		rootdevice[0] = '\0';
+ #if CONFIG_NETBOOT
+ 		if (netboot) {
+@@ -961,6 +1230,8 @@ bsd_init(void)
  	}
  
  
@@ -321,7 +324,7 @@ index ef64824..f6424a3 100644
  #if CONFIG_NETBOOT
  	if (netboot) {
  		int err;
-@@ -1061,14 +1332,17 @@ bsd_init(void)
+@@ -1055,8 +1326,10 @@ bsd_init(void)
  
  	bsd_init_kprintf("calling bsd_utaskbootstrap\n");
  	bsd_utaskbootstrap();
@@ -332,10 +335,11 @@ index ef64824..f6424a3 100644
  
  	bsd_init_kprintf("calling mountroot_post_hook\n");
  
- #if XNU_TARGET_OS_OSX
- 	/* invoke post-root-mount hook */
- 	if (mountroot_post_hook != NULL) {
+@@ -1066,6 +1339,7 @@ bsd_init(void)
  		mountroot_post_hook();
  	}
  #endif
 +	sweet_stage(8);
+ 
+ #if 0 /* not yet */
+ 	consider_zone_gc(FALSE);
