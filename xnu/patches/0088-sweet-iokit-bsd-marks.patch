@@ -1,0 +1,22 @@
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index 260d9e2..c6da67d 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -702,6 +702,7 @@ kernel_bootstrap_thread(void)
+ 
+ #ifdef  IOKIT
+ 	kernel_bootstrap_log("PE_init_iokit");
++	kprintf("SWEET STAGE: calling PE_init_iokit\n");
+ 	PE_init_iokit();
+ 	kprintf("SWEET STAGE: PE_init_iokit done\n");
+ #endif
+@@ -806,8 +807,8 @@ kernel_bootstrap_thread(void)
+ 	 *	Start the user bootstrap.
+ 	 */
+ #ifdef  MACH_BSD
+-	bsd_init();
+ 	kprintf("SWEET STAGE: calling bsd_init\n");
++	bsd_init();
+ #endif
+ 
+ 
