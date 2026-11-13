@@ -1,0 +1,80 @@
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index bec97fb..0eef989 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -593,6 +593,7 @@ static void
+ kernel_bootstrap_thread(void)
+ {
+ 	processor_t processor = current_processor();
++	kprintf("SWEET STAGE: bootstrap thread enter\n");
+ 
+ #if (DEVELOPMENT || DEBUG)
+ 	platform_stall_panic_or_spin(PLATFORM_STALL_XNU_LOCATION_KERNEL_BOOTSTRAP);
+@@ -612,6 +613,7 @@ kernel_bootstrap_thread(void)
+ 	 */
+ 	kernel_bootstrap_thread_log("sched_startup");
+ 	sched_startup();
++	kprintf("SWEET STAGE: sched_startup done\n");
+ 
+ 	/*
+ 	 * Thread lifecycle maintenance (teardown, stack allocation)
+@@ -642,6 +644,7 @@ kernel_bootstrap_thread(void)
+ 	 */
+ 	kernel_bootstrap_thread_log("clock_service_create");
+ 	clock_service_create();
++	kprintf("SWEET STAGE: clock_service_create done\n");
+ 
+ 	/*
+ 	 *	Create the device service.
+@@ -649,10 +652,12 @@ kernel_bootstrap_thread(void)
+ 	device_service_create();
+ 
+ 	phys_carveout_init();
++	kprintf("SWEET STAGE: device_service + phys_carveout done\n");
+ 
+ #if MACH_KDP
+ 	kernel_bootstrap_log("kdp_init");
+ 	kdp_init();
++	kprintf("SWEET STAGE: kdp_init done\n");
+ #endif
+ 
+ #if ALTERNATE_DEBUGGER
+@@ -670,6 +675,7 @@ kernel_bootstrap_thread(void)
+ #endif
+ 
+ 	kernel_startup_initialize_upto(STARTUP_SUB_SYSCTL);
++	kprintf("SWEET STAGE: startup SYSCTL done\n");
+ 
+ 	/*
+ 	 * Initialize the globals used for permuting kernel
+@@ -687,6 +693,7 @@ kernel_bootstrap_thread(void)
+ #ifdef  IOKIT
+ 	kernel_bootstrap_log("PE_init_iokit");
+ 	PE_init_iokit();
++	kprintf("SWEET STAGE: PE_init_iokit done\n");
+ #endif
+ 
+ 	assert(ml_get_interrupts_enabled() == FALSE);
+@@ -707,12 +714,14 @@ kernel_bootstrap_thread(void)
+ 	 * This will start displaying progress to the user, start as early as possible
+ 	 */
+ 	initialize_screen(NULL, kPEAcquireScreen);
++	kprintf("SWEET STAGE: spllo + initialize_screen done\n");
+ 
+ 	/*
+ 	 *	Initialize the shared region module.
+ 	 */
+ 	vm_commpage_init();
+ 	vm_commpage_text_init();
++	kprintf("SWEET STAGE: vm_commpage done\n");
+ 
+ #if CONFIG_MACF
+ 	kernel_bootstrap_log("mac_policy_initmach");
+@@ -788,6 +797,7 @@ kernel_bootstrap_thread(void)
+ 	 */
+ #ifdef  MACH_BSD
+ 	bsd_init();
++	kprintf("SWEET STAGE: calling bsd_init\n");
+ #endif
+ 
+ 
