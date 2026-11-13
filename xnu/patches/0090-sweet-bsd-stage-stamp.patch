@@ -1,8 +1,8 @@
 diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
-index cdd5aad..28a8f1b 100644
+index cdd5aad..86d6f80 100644
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -473,6 +473,301 @@ bsd_rooted_ramdisk(void)
+@@ -473,6 +473,314 @@ bsd_rooted_ramdisk(void)
   * of the tro_ucred field so that the uthread structure can be
   * used like any other.
   */
@@ -44,13 +44,26 @@ index cdd5aad..28a8f1b 100644
 +/* exported to libsa/bootstrap.cpp and osfmk/kern/startup.c */
 +void sweet_fb_mark(const char *tag);
 +
-+static volatile uint32_t *
-+sweet_stamp_fb(void)
++/*
++ * Must be called from kernel_bootstrap() while startup_phase is still below
++ * STARTUP_SUB_KMEM: io_map() then hands out virtual space directly instead of
++ * kmem_alloc()ing from io_submap, which is only 8MB (osfmk/arm/io_map.c) and
++ * would panic on a 0x2300000 mapping - that is exactly the
++ * "kmem_alloc(..., 36700160, 0x100021): failed with 3" panic seen on screen.
++ */
++void
++sweet_fb_early_init(void)
 +{
 +	if (sweet_stamp_base == NULL) {
 +		sweet_stamp_base = (volatile uint32_t *)ml_io_map_wcomb(
 +		    (vm_offset_t)(uintptr_t)SWEET_STAMP_FB, 0x2300000);
 +	}
++}
++
++static volatile uint32_t *
++sweet_stamp_fb(void)
++{
++	/* never map lazily: past STARTUP_SUB_KMEM that panics the kernel */
 +	return sweet_stamp_base;
 +}
 +
@@ -304,7 +317,7 @@ index cdd5aad..28a8f1b 100644
  void
  bsd_init(void)
  {
-@@ -491,6 +786,9 @@ bsd_init(void)
+@@ -491,6 +799,9 @@ bsd_init(void)
  #endif
  
  	printf("SWEET PROBE: bsd_init enter\n");
@@ -314,7 +327,7 @@ index cdd5aad..28a8f1b 100644
  
  	/*
  	 * VM and pmap are up here, so the apollo keys/touch bring-up can run.
-@@ -505,6 +803,7 @@ bsd_init(void)
+@@ -505,6 +816,7 @@ bsd_init(void)
  		apollo_touch_init();
  		printf("SWEET PROBE: apollo input init done\n");
  	}
@@ -322,7 +335,7 @@ index cdd5aad..28a8f1b 100644
  
  #define DEBUG_BSDINIT 1
  
-@@ -712,6 +1011,7 @@ bsd_init(void)
+@@ -712,6 +1024,7 @@ bsd_init(void)
  	extern void sweet_hfs_register(void);
  	sweet_hfs_register();
  #endif
@@ -330,7 +343,7 @@ index cdd5aad..28a8f1b 100644
  
  #if CONFIG_PROC_UUID_POLICY
  	/* Initial proc_uuid_policy subsystem */
-@@ -883,15 +1183,22 @@ bsd_init(void)
+@@ -883,15 +1196,22 @@ bsd_init(void)
  		int err;
  
  		bsd_init_kprintf("calling setconf\n");
@@ -353,7 +366,7 @@ index cdd5aad..28a8f1b 100644
  		rootdevice[0] = '\0';
  #if CONFIG_NETBOOT
  		if (netboot) {
-@@ -961,6 +1268,8 @@ bsd_init(void)
+@@ -961,6 +1281,8 @@ bsd_init(void)
  	}
  
  
@@ -362,7 +375,7 @@ index cdd5aad..28a8f1b 100644
  #if CONFIG_NETBOOT
  	if (netboot) {
  		int err;
-@@ -1055,8 +1364,10 @@ bsd_init(void)
+@@ -1055,8 +1377,10 @@ bsd_init(void)
  
  	bsd_init_kprintf("calling bsd_utaskbootstrap\n");
  	bsd_utaskbootstrap();
@@ -373,7 +386,7 @@ index cdd5aad..28a8f1b 100644
  
  	bsd_init_kprintf("calling mountroot_post_hook\n");
  
-@@ -1066,6 +1377,7 @@ bsd_init(void)
+@@ -1066,6 +1390,7 @@ bsd_init(void)
  		mountroot_post_hook();
  	}
  #endif
