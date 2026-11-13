@@ -1,0 +1,22 @@
+diff --git a/osfmk/arm/io_map.c b/osfmk/arm/io_map.c
+index 18ef2f0..ef0413e 100644
+--- a/osfmk/arm/io_map.c
++++ b/osfmk/arm/io_map.c
+@@ -62,7 +62,17 @@
+ 
+ extern vm_offset_t virtual_space_start;     /* Next available kernel VA */
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++/*
++ * SWEET: the boot framebuffer is mapped with one 0x2300000 (35MB)
++ * ml_io_map_wcomb() so the kernel can paint its own banner before the VC
++ * console exists.  The default 8MB io_submap makes that kmem_alloc() panic
++ * with KERN_NO_SPACE (3) in vm_kern.c.
++ */
++#define IO_MAP_SIZE            (96ul << 20)
++#else
+ #define IO_MAP_SIZE            (8ul << 20)
++#endif
+ 
+ __startup_data static struct mach_vm_range io_range;
+ static SECURITY_READ_ONLY_LATE(vm_map_t) io_submap;

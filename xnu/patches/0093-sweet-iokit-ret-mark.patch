@@ -1,24 +1,24 @@
 diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
-index c6da67d..f70a232 100644
+index c6da67d..15e83bf 100644
 --- a/osfmk/kern/startup.c
 +++ b/osfmk/kern/startup.c
-@@ -430,6 +430,16 @@ kernel_bootstrap(void)
- 
- 	scale_setup();
+@@ -433,6 +433,16 @@ kernel_bootstrap(void)
+ 	kernel_bootstrap_log("vm_mem_bootstrap");
+ 	vm_mem_bootstrap();
  
 +#if defined(ARM64_BOARD_CONFIG_SWEET)
 +	{
-+		/* map the boot framebuffer before vm_mem_bootstrap() advances
-+		 * startup_phase to KMEM; io_map() then uses virtual space directly
-+		 * instead of allocating 0x2300000 from the 8MB io_submap */
++		/* now that KMEM (and io_submap, 96MB on SWEET) exists, map the boot
++		 * framebuffer; doing this earlier panicked in pmap_map_bd with
++		 * "no PTE", because the pre-KMEM virtual space has no page tables */
 +		extern void sweet_fb_early_init(void);
 +		sweet_fb_early_init();
 +	}
 +#endif
 +
- 	kernel_bootstrap_log("vm_mem_bootstrap");
- 	vm_mem_bootstrap();
- 
+ 	machine_info.memory_size = (uint32_t)mem_size;
+ #if XNU_TARGET_OS_OSX
+ 	machine_info.max_mem = max_mem_actual;
 @@ -705,6 +715,14 @@ kernel_bootstrap_thread(void)
  	kprintf("SWEET STAGE: calling PE_init_iokit\n");
  	PE_init_iokit();
