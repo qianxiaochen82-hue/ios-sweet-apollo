@@ -34,12 +34,23 @@ env:
 
 jobs:
   build:
-    # macos-14 still ships Xcode 15.x: its iig matches the xnu-8796 IORPC ABI
-    # (Xcode 16's iig emits IORPC.kernelContent, which this xnu lacks)
-    runs-on: macos-14
+    # macos-14 was retired by GitHub on 2026-11-02; macos-15 only ships Xcode 16+.
+    # xnu-8796 wants Xcode 15.x's iig (Xcode 16's iig emits IORPC.kernelContent,
+    # which this xnu lacks), so pick 15.x back up when the image happens to have it.
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+
+      - name: Report toolchain
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          if [ -d /Applications/Xcode_15.4.app ]; then
+            sudo xcode-select -s /Applications/Xcode_15.4.app
+            echo "DEVELOPER_DIR=/Applications/Xcode_15.4.app/Contents/Developer" >> "$GITHUB_ENV"
+          fi
+          xcodebuild -version
+          sw_vers
 
       - name: Fetch build script
         run: |
