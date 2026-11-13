@@ -1,17 +1,16 @@
 diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
-index 95c9bbc..f5b1a79 100644
+index 95c9bbc..3353b12 100644
 --- a/iokit/Kernel/arm/hid/SweetHID.cpp
 +++ b/iokit/Kernel/arm/hid/SweetHID.cpp
-@@ -21,6 +21,8 @@
+@@ -21,6 +21,7 @@
  #include <IOKit/IOTimerEventSource.h>
  #include <libkern/c++/OSArray.h>
  #include <pexpert/pexpert.h>
-+#include <kern/clock.h>
 +#include <kern/thread.h>
  
  #include "IOHIDEventService.h"
  #include "IOHIDEventServiceUserClient.h"
-@@ -390,9 +392,11 @@ SweetHIDButtons::start(IOService *provider)
+@@ -390,9 +391,11 @@ SweetHIDButtons::start(IOService *provider)
  	 * sweethidtest=N keeps its old meaning (Home key test every N s).
  	 */
  	PE_parse_boot_argn("sweethidtest", &fTestSecs, sizeof(fTestSecs));
@@ -26,7 +25,7 @@ index 95c9bbc..f5b1a79 100644
  	}
  	gSweetButtons = this;
  	registerService();
-@@ -424,11 +428,7 @@ SweetHIDButtons::testFired(OSObject *owner, IOTimerEventSource *sender)
+@@ -424,11 +427,7 @@ SweetHIDButtons::testFired(OSObject *owner, IOTimerEventSource *sender)
  {
  	SweetHIDButtons *self = (SweetHIDButtons *)owner;
  
@@ -39,7 +38,7 @@ index 95c9bbc..f5b1a79 100644
  
  	/*
  	 * Home (Menu) press, then the release 100 ms later; Setup's "Hello"
-@@ -441,6 +441,21 @@ SweetHIDButtons::testFired(OSObject *owner, IOTimerEventSource *sender)
+@@ -441,6 +440,17 @@ SweetHIDButtons::testFired(OSObject *owner, IOTimerEventSource *sender)
  	}
  }
  
@@ -47,13 +46,9 @@ index 95c9bbc..f5b1a79 100644
 +sweetTickThread(void *, wait_result_t)
 +{
 +	UInt32 n = 0;
-+	int t = hz;
 +
-+	if (t <= 0) {
-+		t = 100;
-+	}
 +	for (;;) {
-+		delay(t * 3);
++		IOSleep(3000);
 +		IOLog("SWEET TICK %u\n", ++n);
 +	}
 +}
@@ -61,7 +56,7 @@ index 95c9bbc..f5b1a79 100644
  bool
  SweetHIDTouch::start(IOService *provider)
  {
-@@ -461,6 +476,20 @@ SweetHIDTouch::start(IOService *provider)
+@@ -461,6 +471,20 @@ SweetHIDTouch::start(IOService *provider)
  	gSweetTouch = this;
  	registerService();
  	IOLog("SWEET HID: touch registered\n");
