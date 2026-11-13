@@ -1,0 +1,66 @@
+diff --git a/libsa/bootstrap.cpp b/libsa/bootstrap.cpp
+--- a/libsa/bootstrap.cpp
++++ b/libsa/bootstrap.cpp
+@@ -204,6 +204,9 @@ KLDBootstrap::readStartupExtensions(void)
+ 	prelinkInfoSect = getsectbynamefromheader(mh, kPrelinkInfoSegment, kPrelinkInfoSection);
++	IOLog("SWEET BSD: prelink info size=%u\n", (unsigned)prelinkInfoSect->size);
+ 	if (prelinkInfoSect->size) {
+ 		readPrelinkedExtensions(mh, KCKindPrimary);
+ 	} else {
++		IOLog("SWEET BSD: calling readBooterExtensions\n");
+ 		readBooterExtensions();
++		IOLog("SWEET BSD: readBooterExtensions returned\n");
+ 	}
+@@ -387,6 +390,11 @@ KLDBootstrap::readBooterExtensions(void)
+ 	OSKextLog(/* kext */ NULL,
+ 	    kOSKextLogProgressLevel |
+ 	    kOSKextLogDirectoryScanFlag | kOSKextLogKextBookkeepingFlag,
+ 	    "Reading startup extensions from booter memory.");
+ 
++#ifdef CONFIG_EMBEDDED
++	IOLog("SWEET BSD: booter ext enter, embedded=1\n");
++#else
++	IOLog("SWEET BSD: booter ext enter, embedded=0\n");
++#endif
+ 	booterMemoryMap = IORegistryEntry::fromPath( "/chosen/memory-map", gIODTPlane);
+@@ -394,16 +402,17 @@ KLDBootstrap::readBooterExtensions(void)
+ 	if (!booterMemoryMap) {
+ 		OSKextLog(/* kext */ NULL,
+ 		    kOSKextLogErrorLevel |
+ 		    kOSKextLogGeneralFlag | kOSKextLogDirectoryScanFlag,
+ 		    "Can't read booter memory map.");
+ 		goto finish;
+ 	}
+ 
++	IOLog("SWEET BSD: memory-map node found\n");
+ 	propertyDict = booterMemoryMap->dictionaryWithProperties();
+ 	if (!propertyDict) {
+ 		OSKextLog(/* kext */ NULL,
+ 		    kOSKextLogErrorLevel |
+ 		    kOSKextLogDirectoryScanFlag,
+ 		    "Can't get property dictionary from memory map.");
+ 		goto finish;
+ 	}
+@@ -420,7 +429,8 @@ KLDBootstrap::readBooterExtensions(void)
+ 	/* Create dictionary of excluded kexts
+ 	 */
+ #ifndef CONFIG_EMBEDDED
+ 	OSKext::createExcludeListFromBooterData(propertyDict.get(), keyIterator.get());
+ #endif
++	IOLog("SWEET BSD: exclude list done\n");
+ 	// !! reset the iterator, not the pointer
+ 	keyIterator->reset();
+@@ -428,6 +438,7 @@ KLDBootstrap::readBooterExtensions(void)
+ 	while ((deviceTreeName =
+ 	    OSDynamicCast(OSString, keyIterator->getNextObject()))) {
+ 		const char * devTreeNameCString = deviceTreeName->getCStringNoCopy();
++		IOLog("SWEET BSD: key %s\n", devTreeNameCString);
+ 		OSData * deviceTreeEntry = OSDynamicCast(OSData,
+ 		    propertyDict->getObject(deviceTreeName));
+ 
+@@ -496,4 +507,5 @@ KLDBootstrap::readBooterExtensions(void)
+ finish:
+ 	sweet_kld_mark("booter extensions done");
++	IOLog("SWEET BSD: booter ext finish\n");
+ 	return;
+ }

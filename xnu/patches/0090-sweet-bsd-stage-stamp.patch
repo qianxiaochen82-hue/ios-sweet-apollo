@@ -2,7 +2,7 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 index ef64824..f6424a3 100644
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -473,6 +473,86 @@ bsd_rooted_ramdisk(void)
+@@ -473,6 +473,95 @@ bsd_rooted_ramdisk(void)
   * of the tro_ucred field so that the uthread structure can be
   * used like any other.
   */
@@ -20,6 +20,7 @@ index ef64824..f6424a3 100644
 +#define SWEET_STAMP_STRIDE (4320u / 4)
 +static volatile uint32_t *sweet_stamp_base;
 +static unsigned sweet_stamp_stage;
++static unsigned sweet_mount_tries;
 +
 +static volatile uint32_t *
 +sweet_stamp_fb(void)
@@ -32,21 +33,28 @@ index ef64824..f6424a3 100644
 +}
 +
 +static void
-+sweet_stamp_block(unsigned index, uint32_t color)
++sweet_stamp_block_at(unsigned row, unsigned index, uint32_t color)
 +{
 +	volatile uint32_t *fb = sweet_stamp_fb();
-+	unsigned x0;
++	unsigned x0, y0;
 +
 +	if (fb == NULL) {
 +		return;
 +	}
 +	x0 = 8 + index * 72;
-+	for (unsigned y = 8; y < 72; y++) {
++	y0 = 8 + row * 80;
++	for (unsigned y = y0; y < y0 + 64 && y < 2400; y++) {
 +		for (unsigned x = x0; x < x0 + 64 && x < SWEET_STAMP_W; x++) {
 +			fb[y * SWEET_STAMP_STRIDE + x] = color;
 +		}
 +	}
 +	__asm__ volatile("dsb sy" ::: "memory");
++}
++
++static void
++sweet_stamp_block(unsigned index, uint32_t color)
++{
++	sweet_stamp_block_at(0, index, color);
 +}
 +
 +static void
@@ -56,7 +64,8 @@ index ef64824..f6424a3 100644
 +	for (unsigned i = 1; i <= stage; i++) {
 +		sweet_stamp_block(i, 0xff00c800u);
 +	}
-+	/* the console text overwrites the top rows, so say it in text too */
++	/* the console text overwrites the top rows, so say it in text too;
++	 * printf may no longer reach fbcon here, so the blocks are the truth. */
 +	printf("SWEET BSDSTAGE %u\n", stage);
 +}
 +
@@ -114,14 +123,26 @@ index ef64824..f6424a3 100644
  
  #if CONFIG_PROC_UUID_POLICY
  	/* Initial proc_uuid_policy subsystem */
-@@ -889,6 +969,7 @@ bsd_init(void)
+@@ -889,12 +971,19 @@ bsd_init(void)
  		int err;
  
  		bsd_init_kprintf("calling setconf\n");
++		printf("SWEET MOUNT: setconf try %u\n", ++sweet_mount_tries);
++		sweet_stamp_block_at(1, sweet_mount_tries, 0xffff8000u);
 +		sweet_stage(4);
  		setconf();
  #if CONFIG_NETBOOT
  		netboot = (mountroot == netboot_mountroot);
+ #endif
+ 
+ 		bsd_init_kprintf("vfs_mountroot\n");
++		for (unsigned i = 0; i < 16; i++) {
++			sweet_stamp_block_at(2, i, 0xffffffffu);
++		}
+ 		if (0 == (err = vfs_mountroot())) {
+ 			break;
+ 		}
++		sweet_stamp_block_at(2, (unsigned)err & 15u, 0xffff0000u);
 @@ -967,6 +1048,8 @@ bsd_init(void)
  	}
  
