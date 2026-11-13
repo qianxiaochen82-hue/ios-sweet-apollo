@@ -1,16 +1,7 @@
 diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
-index 95c9bbc..3353b12 100644
 --- a/iokit/Kernel/arm/hid/SweetHID.cpp
 +++ b/iokit/Kernel/arm/hid/SweetHID.cpp
-@@ -21,6 +21,7 @@
- #include <IOKit/IOTimerEventSource.h>
- #include <libkern/c++/OSArray.h>
- #include <pexpert/pexpert.h>
-+#include <kern/thread.h>
- 
- #include "IOHIDEventService.h"
- #include "IOHIDEventServiceUserClient.h"
-@@ -390,9 +391,11 @@ SweetHIDButtons::start(IOService *provider)
+@@ -390,9 +390,11 @@ SweetHIDButtons::start(IOService *provider)
  	 * sweethidtest=N keeps its old meaning (Home key test every N s).
  	 */
  	PE_parse_boot_argn("sweethidtest", &fTestSecs, sizeof(fTestSecs));
@@ -25,7 +16,7 @@ index 95c9bbc..3353b12 100644
  	}
  	gSweetButtons = this;
  	registerService();
-@@ -424,11 +427,7 @@ SweetHIDButtons::testFired(OSObject *owner, IOTimerEventSource *sender)
+@@ -424,11 +426,7 @@ SweetHIDButtons::testFired(OSObject *owner, IOTimerEventSource *sender)
  {
  	SweetHIDButtons *self = (SweetHIDButtons *)owner;
  
@@ -38,42 +29,3 @@ index 95c9bbc..3353b12 100644
  
  	/*
  	 * Home (Menu) press, then the release 100 ms later; Setup's "Hello"
-@@ -441,6 +440,17 @@ SweetHIDButtons::testFired(OSObject *owner, IOTimerEventSource *sender)
- 	}
- }
- 
-+static void
-+sweetTickThread(void *, wait_result_t)
-+{
-+	UInt32 n = 0;
-+
-+	for (;;) {
-+		IOSleep(3000);
-+		IOLog("SWEET TICK %u\n", ++n);
-+	}
-+}
-+
- bool
- SweetHIDTouch::start(IOService *provider)
- {
-@@ -461,6 +471,20 @@ SweetHIDTouch::start(IOService *provider)
- 	gSweetTouch = this;
- 	registerService();
- 	IOLog("SWEET HID: touch registered\n");
-+	/*
-+	 * Liveness probe independent of any IOKit work loop.  The buttons
-+	 * timer never fired on kona (193d7b9 / 3eb7cac runs: zero SWEET HB),
-+	 * so this kernel thread reports every 3 s if the scheduler runs.
-+	 */
-+	{
-+		thread_t th;
-+
-+		if (kernel_thread_start(sweetTickThread, NULL, &th) == KERN_SUCCESS) {
-+			thread_deallocate(th);
-+		} else {
-+			IOLog("SWEET PROBE: tick thread start failed\n");
-+		}
-+	}
- 	return true;
- }
- 
