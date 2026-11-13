@@ -245,7 +245,7 @@
 
 --- /dev/null
 +++ b/bsd/dev/apollo_touch.c
-@@ -0,0 +1,519 @@
+@@ -0,0 +1,541 @@
 +/*
 + * apollo (Redmi K30S Ultra / SM8250 "kona") Novatek NT36675 touch.
 + *
@@ -746,10 +746,32 @@
 +		printf("SWEET TOUCH(apollo): SE not responding, irq=%#x\n", tsp.last_irq);
 +		return;
 +	}
-+	tsp_reset();
-+	(void)tsp_chip_id();
-+	if (!tsp_fw_info(&xmax, &ymax, &ver)) {
-+		printf("SWEET TOUCH(apollo): no fw info (irq=%#x, gpio39=%u)\n",
++	/* The vendor probe always issues a bootloader reset here and then the
++	 * panel resume path uploads novatek_nt36675_j3s_fw01.bin.  We have no
++	 * firmware blob, so first try the chip as it was left by the boot chain
++	 * (FW still running after a warm reboot); only fall back to the full
++	 * reset sequence, which parks it in the bootloader. */
++	bool have_fw = false;
++	for (int i = 0; i < 3 && !have_fw; ++i) {
++		have_fw = tsp_fw_info(&xmax, &ymax, &ver);
++		if (!have_fw) {
++			tsp_delay(10);
++		}
++	}
++	if (!have_fw) {
++		printf("SWEET TOUCH(apollo): no fw, doing reset sequence\n");
++		tsp_reset();
++		(void)tsp_chip_id();
++		for (int i = 0; i < 3 && !have_fw; ++i) {
++			have_fw = tsp_fw_info(&xmax, &ymax, &ver);
++			if (!have_fw) {
++				tsp_delay(10);
++			}
++		}
++	}
++	if (!have_fw) {
++		printf("SWEET TOUCH(apollo): no fw info (irq=%#x, gpio39=%u); chip "
++		    "likely in bootloader, needs nt36675 fw download\n",
 +		    tsp.last_irq, tsp_gpio_in(39));
 +		return;
 +	}
