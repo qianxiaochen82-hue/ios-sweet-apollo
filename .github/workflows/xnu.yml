@@ -107,6 +107,21 @@ jobs:
           path: buildtree.tgz
           retention-days: 7
 
+      - name: Keep key source files
+        if: always()
+        run: |
+          mkdir -p src
+          cp dxb/xnu/osfmk/kern/startup.c src/ || true
+          cp dxb/xnu/bsd/kern/bsd_init.c src/ || true
+          cp dxb/xnu/bsd/dev/sweet_ufs.c src/ || true
+          ls -la src
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xnu-src
+          path: src/
+
       - name: Inspect closed KDK support libs
         if: always()
         run: |
