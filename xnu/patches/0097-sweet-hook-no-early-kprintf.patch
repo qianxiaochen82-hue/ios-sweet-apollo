@@ -1,0 +1,52 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 03ec633..73b68e7 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -800,7 +800,8 @@ sweet_fb_mark(const char *tag)
+  * only handles unsigned.
+  */
+ void
+-sweet_fb_hook(unsigned subsystem, unsigned rank, const void *func)
++sweet_fb_hook(unsigned subsystem, unsigned rank, const void *func,
++    int can_print)
+ {
+ 	char buf[64];
+ 	char *p = buf;
+@@ -819,8 +820,12 @@ sweet_fb_hook(unsigned subsystem, unsigned rank, const void *func)
+ 	p = sweet_stphex(p, (unsigned)f);
+ 	*p = '\0';
+ 	sweet_log(buf);
+-	printf("SWEET HOOK %u sub=%u rank=%u fn=0x%llx\n", sweet_mark_count,
+-	    subsystem, rank, (unsigned long long)f);
++	if (can_print) {
++		/* kprintf before STARTUP_SUB_KPRINTF takes an uninitialized
++		 * ticket lock and panics in lock_ticket.c */
++		printf("SWEET HOOK %u sub=%u rank=%u fn=0x%llx\n",
++		    sweet_mark_count, subsystem, rank, (unsigned long long)f);
++	}
+ }
+ 
+ static void
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index 2a40acc..86b29c5 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -411,10 +411,15 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
+ 		{
+ 			/* boot-arg startup_debug never got parsed on this shim, so
+ 			 * paint each hook through our own framebuffer channel:
+-			 * the last one on screen is the hook that hangs. */
+-			extern void sweet_fb_hook(unsigned, unsigned, const void *);
++			 * the last one on screen is the hook that hangs.
++			 * 4th arg: kprintf must not be used before its lock is
++			 * initialized, hence the same STARTUP_SUB_KPRINTF gate as
++			 * the verbose print above. */
++			extern void sweet_fb_hook(unsigned, unsigned, const void *,
++			    int);
+ 			sweet_fb_hook((unsigned)cur->subsystem,
+-			    (unsigned)cur->rank, (const void *)cur->func);
++			    (unsigned)cur->rank, (const void *)cur->func,
++			    startup_phase >= STARTUP_SUB_KPRINTF);
+ 		}
+ #endif
+ 		cur->func(cur->arg);
