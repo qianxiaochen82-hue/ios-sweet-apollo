@@ -1,24 +1,25 @@
 diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
-index c6da67d..5373254 100644
+index c6da67d..f70a232 100644
 --- a/osfmk/kern/startup.c
 +++ b/osfmk/kern/startup.c
-@@ -433,6 +433,15 @@ kernel_bootstrap(void)
- 	kernel_bootstrap_log("vm_mem_bootstrap");
- 	vm_mem_bootstrap();
+@@ -430,6 +430,16 @@ kernel_bootstrap(void)
+ 
+ 	scale_setup();
  
 +#if defined(ARM64_BOARD_CONFIG_SWEET)
 +	{
-+		/* map the boot framebuffer while startup_phase < STARTUP_SUB_KMEM,
-+		 * i.e. before io_map() starts allocating from the 8MB io_submap */
++		/* map the boot framebuffer before vm_mem_bootstrap() advances
++		 * startup_phase to KMEM; io_map() then uses virtual space directly
++		 * instead of allocating 0x2300000 from the 8MB io_submap */
 +		extern void sweet_fb_early_init(void);
 +		sweet_fb_early_init();
 +	}
 +#endif
 +
- 	machine_info.memory_size = (uint32_t)mem_size;
- #if XNU_TARGET_OS_OSX
- 	machine_info.max_mem = max_mem_actual;
-@@ -705,6 +714,14 @@ kernel_bootstrap_thread(void)
+ 	kernel_bootstrap_log("vm_mem_bootstrap");
+ 	vm_mem_bootstrap();
+ 
+@@ -705,6 +715,14 @@ kernel_bootstrap_thread(void)
  	kprintf("SWEET STAGE: calling PE_init_iokit\n");
  	PE_init_iokit();
  	kprintf("SWEET STAGE: PE_init_iokit done\n");
