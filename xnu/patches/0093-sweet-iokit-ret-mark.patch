@@ -1,11 +1,11 @@
 diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
-index bec97fb..6c631fa 100644
+index c6da67d..7b8e186 100644
 --- a/osfmk/kern/startup.c
 +++ b/osfmk/kern/startup.c
-@@ -687,6 +687,14 @@ kernel_bootstrap_thread(void)
- #ifdef  IOKIT
- 	kernel_bootstrap_log("PE_init_iokit");
+@@ -705,6 +705,14 @@ kernel_bootstrap_thread(void)
+ 	kprintf("SWEET STAGE: calling PE_init_iokit\n");
  	PE_init_iokit();
+ 	kprintf("SWEET STAGE: PE_init_iokit done\n");
 +#if defined(ARM64_BOARD_CONFIG_SWEET)
 +	{
 +		/* bsd/kern/bsd_init.c: paints the boot framebuffer directly, so it
