@@ -1,7 +1,8 @@
 diff --git a/bsd/conf/files b/bsd/conf/files
+index 6630131..73c4f34 100644
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -108,6 +108,8 @@
+@@ -108,6 +108,8 @@ bsd/dev/sweet_ufs.c			standard
  bsd/dev/sweet_sample.c			standard
  bsd/dev/sweet_keys.c			standard
  bsd/dev/sweet_touch.c			standard
@@ -10,31 +11,9 @@ diff --git a/bsd/conf/files b/bsd/conf/files
  bsd/dev/sweet_rpmh.c			standard
  bsd/dev/sweet_spmi.c			standard
  bsd/dev/sweet_usb.c			standard
-diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
---- a/bsd/dev/sweet_ufs.c
-+++ b/bsd/dev/sweet_ufs.c
-@@ -52,6 +52,8 @@
- extern void sweet_sample_start(void);
- extern void sweet_keys_init(void);
- extern void sweet_touch_init(void);
-+extern void apollo_keys_init(void);
-+extern void apollo_touch_init(void);
- extern void sweet_usb_probe(void);
- 
- #define REG_CAP         0x00
-@@ -657,8 +659,8 @@
- 	sweet_log_start();
- 	sweet_sample_start();
- 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
--	sweet_keys_init();
--	sweet_touch_init();
-+	apollo_keys_init();
-+	apollo_touch_init();
- 	sweet_usb_probe();
- 	return 0;
- }
-diff --git a/bsd/dev/apollo_keys.c b/bsd/dev/apollo_keys.c
+diff --git b/bsd/dev/apollo_keys.c b/bsd/dev/apollo_keys.c
 new file mode 100644
+index 0000000..05942d0
 --- /dev/null
 +++ b/bsd/dev/apollo_keys.c
 @@ -0,0 +1,205 @@
@@ -243,11 +222,12 @@ new file mode 100644
 +	}
 +}
 +#endif /* ARM64_BOARD_CONFIG_SWEET */
-diff --git a/bsd/dev/apollo_touch.c b/bsd/dev/apollo_touch.c
+diff --git b/bsd/dev/apollo_touch.c b/bsd/dev/apollo_touch.c
 new file mode 100644
+index 0000000..1658195
 --- /dev/null
 +++ b/bsd/dev/apollo_touch.c
-@@ -0,0 +1,541 @@
+@@ -0,0 +1,607 @@
 +/*
 + * apollo (Redmi K30S Ultra / SM8250 "kona") Novatek NT36675 touch.
 + *
@@ -270,18 +250,27 @@ new file mode 100644
 + *                         down when status is 1 (enter) or 2 (move)
 + *
 + * Transport: polled GENI SPI (QUPv3 wrapper 0, SE4 at 0x990000), 8 bit words,
-+ * mode 0, 15 MHz (spi-max-frequency in the dts).  IRQ 605 / gpio39 is not
-+ * wired up in XNU; the point buffer is polled at ~1 kHz instead, which is
-+ * the same read the vendor's threaded handler performs.  All transfers are
-+ * <= 16 bytes so the FIFO never overflows and no DMA is needed.
++ * mode 0, 10 MHz.  The vendor dtsi says spi-max-frequency = <10000000> and the
++ * vendor kernel logs "tx_fifo 16 rx_fifo 16 tx_width 32"; every transfer here
++ * stays <= 16 bytes and no DMA is needed.
 + *
-+ * Board facts (arch/arm64/boot/dts/venor/qcom/kona-qupv3.dtsi,
-+ * xiaomi-sm8250-common.dtsi, /proc/interrupts on the live phone):
-+ *   spi@990000, IRQ 605, pins gpio8..11 = "qup4", TLMM 0x0f000000,
++ * Data-ready is the touch INT line on TLMM gpio39 (vendor DT
++ * novatek,irq-gpio = <&tlmm 39 0x2001>; /proc/interrupts lists it as
++ * "NVT-ts-spi" under msmgpio, 378 interrupts on CPU0).  That is a GPIO edge,
++ * not the SE's own GIC interrupt 605, so this driver watches the pin and only
++ * starts a SPI read while the line is asserted.
++ *
++ * Board facts (arch/arm64/boot/dts/venor/qcom/apollo-sm8250.dtsi,
++ * /proc/interrupts and dmesg on the live phone):
++ *   spi@990000, pins gpio8..11 = "qup4", TLMM 0x0f000000,
 + *   touch VDDIO = tlmm gpio69 (active high), reset = gpio38, irq = gpio39,
 + *   vdd_boost = pm8150b gpio5 (already always-on in the vendor tree).
 + *
-+ * No firmware upload, no PMIC write and no RPMh vote is performed.
++ * No firmware upload and no RPMh vote is performed.  /vendor/firmware has no
++ * Novatek .bin (only NT36xxx_MP_Setting_Criteria_593C.csv) and neither does
++ * /vendor/firmware_mnt, while the kernel source ships
++ * novatek_nt36675_j3s_fw01.bin.ihex, so the firmware lives in the chip's own
++ * flash and the vendor probe never downloads one either.
 + */
 +#if defined(ARM64_BOARD_CONFIG_SWEET)
 +#include <sys/param.h>
@@ -366,7 +355,8 @@ new file mode 100644
 +#define OP_CS_ASSERT        8u
 +#define OP_CS_DEASSERT      9u
 +
-+#define TSP_CHUNK           16u
++#define TSP_FIFO_DEPTH      16u     /* vendor dmesg: tx_fifo 16 rx_fifo 16 */
++#define TSP_CHUNK           TSP_FIFO_DEPTH
 +#define TSP_ENG_RST         0x7fff80u   /* ENG_RST_ADDR in nt36xxx.c */
 +#define TSP_SWRST_N8        0x3f0feu
 +#define TSP_RD_FAST         0x3f310u
@@ -430,6 +420,34 @@ new file mode 100644
 +tsp_gpio_in(unsigned pin)
 +{
 +	return tsp_rd(tsp.tlmm, TL_IO(pin)) & 1u;
++}
++
++/*
++ * gpio39 is the touch INT (vendor DT: novatek,irq-gpio = <&tlmm 39 0x2001>,
++ * active low, pull down).  It is a msmgpio pin, not the SE's GIC interrupt
++ * 605, so configure it as a plain input and watch the level here.
++ */
++static void
++tsp_irq_gpio_init(void)
++{
++	uint32_t cfg = tsp_rd(tsp.tlmm, TL_CFG(39));
++	if (cfg == 0xffffffffu) {
++		printf("SWEET TOUCH: gpio39 not accessible\n");
++		return;
++	}
++	/* mux = gpio (0), output disabled (oe=0), pull down (DT 0x2001) */
++	cfg &= ~((0xfu << 2) | (1u << 9));
++	cfg = (cfg & ~0x3u) | 0x1u;
++	tsp_wr(tsp.tlmm, TL_CFG(39), cfg);
++	printf("SWEET TOUCH: irq gpio39 cfg=%#x level=%u (msmgpio edge, no GIC 605)\n",
++	    tsp_rd(tsp.tlmm, TL_CFG(39)), tsp_gpio_in(39));
++}
++
++/* Asserted (low) means the controller has a report to hand over. */
++static bool
++tsp_irq_asserted(void)
++{
++	return tsp_gpio_in(39) == 0;
 +}
 +
 +static void
@@ -550,7 +568,7 @@ new file mode 100644
 +	tsp_wr(tsp.se, SE_GENI_DMA_MODE, 0);
 +	tsp_wr(tsp.se, SE_GENI_TX_WM, 0);
 +	tsp_wr(tsp.se, SE_GENI_RX_WM, 0);
-+	tsp_wr(tsp.se, SE_GENI_RX_RFR_WM, TSP_CHUNK - 2);
++	tsp_wr(tsp.se, SE_GENI_RX_RFR_WM, TSP_FIFO_DEPTH - 2);
 +	tsp_wr(tsp.se, SE_SPI_LOOPBACK, 0);   /* normal mode */
 +	tsp_wr(tsp.se, SE_SPI_CPHA, 0);       /* mode 0 */
 +	tsp_wr(tsp.se, SE_SPI_CPOL, 0);
@@ -560,12 +578,13 @@ new file mode 100644
 +	tsp_wr(tsp.se, SE_SPI_DELAYS, 0);
 +	tsp_wr(tsp.se, SE_SPI_SLAVE_EN, 0);
 +	tsp_wr(tsp.se, SE_GENI_CLK_SEL, 0);   /* clk_sel = 0 */
-+	/* 150 MHz / 10 = 15 MHz, matching spi-max-frequency in the dts. */
-+	tsp_wr(tsp.se, SE_GENI_SER_M_CLK, (10u << 4) | 1u);
-+	printf("SWEET TOUCH: se status=%#x clk=%#x word=%#x\n",
++	/* 150 MHz / 15 = 10 MHz, matching spi-max-frequency = <10000000>. */
++	tsp_wr(tsp.se, SE_GENI_SER_M_CLK, (15u << 4) | 1u);
++	printf("SWEET TOUCH: se status=%#x clk=%#x word=%#x fifo=%u/%u\n",
 +	    tsp_rd(tsp.se, SE_GENI_STATUS),
 +	    tsp_rd(tsp.se, SE_GENI_SER_M_CLK),
-+	    tsp_rd(tsp.se, SE_SPI_WORD_LEN));
++	    tsp_rd(tsp.se, SE_SPI_WORD_LEN),
++	    TSP_FIFO_DEPTH, TSP_FIFO_DEPTH);
 +	return tsp_rd(tsp.se, SE_GENI_STATUS) != 0xffffffffu;
 +}
 +
@@ -667,6 +686,39 @@ new file mode 100644
 +	return true;
 +}
 +
++/*
++ * The vendor probe calls nvt_get_fw_info() several times and only trusts a
++ * value that stays put; require two consecutive identical valid reads so a
++ * half-updated event buffer cannot feed us bogus xmax/ymax.
++ */
++#define TSP_FWINFO_TRIES    5
++
++static bool
++tsp_fw_info_stable(uint16_t *xmax, uint16_t *ymax, uint8_t *ver)
++{
++	uint16_t lx = 0, ly = 0;
++	uint8_t lv = 0;
++	bool last = false;
++
++	for (int i = 0; i < TSP_FWINFO_TRIES; ++i) {
++		uint16_t x = 0, y = 0;
++		uint8_t v = 0;
++		bool ok = tsp_fw_info(&x, &y, &v);
++		if (ok && last && x == lx && y == ly && v == lv) {
++			*xmax = x;
++			*ymax = y;
++			*ver = v;
++			return true;
++		}
++		lx = x;
++		ly = y;
++		lv = v;
++		last = ok;
++		tsp_delay(10);
++	}
++	return false;
++}
++
 +static void
 +tsp_thread(void *arg, wait_result_t result)
 +{
@@ -678,6 +730,12 @@ new file mode 100644
 +		prev[i] = 0;
 +	}
 +	for (;;) {
++		/* Only read while the gpio39 INT line is asserted (active low);
++		 * this is the same report the vendor's threaded handler reads. */
++		if (!tsp_irq_asserted()) {
++			tsp_delay(1);
++			continue;
++		}
 +		/* Protocol B: point_data[1 + 6*i] carries {id << 3 | status}. */
 +		uint8_t buf[TSP_POINT_LEN];
 +		if (nt_read(TSP_EVENT_BUF, buf, sizeof(buf))) {
@@ -743,39 +801,27 @@ new file mode 100644
 +	(void)tsp_gpio_dir_out(69, 1);   /* touch vddio, active high */
 +	tsp_delay(20);
 +	tsp_mux_qup4();
++	tsp_irq_gpio_init();
 +	(void)tsp_clock_on();
 +	if (!tsp_se_init()) {
 +		printf("SWEET TOUCH(apollo): SE not responding, irq=%#x\n", tsp.last_irq);
 +		return;
 +	}
-+	/* The vendor probe always issues a bootloader reset here and then the
-+	 * panel resume path uploads novatek_nt36675_j3s_fw01.bin.  We have no
-+	 * firmware blob, so first try the chip as it was left by the boot chain
-+	 * (FW still running after a warm reboot); only fall back to the full
-+	 * reset sequence, which parks it in the bootloader. */
-+	bool have_fw = false;
-+	for (int i = 0; i < 3 && !have_fw; ++i) {
-+		have_fw = tsp_fw_info(&xmax, &ymax, &ver);
-+		if (!have_fw) {
-+			tsp_delay(10);
-+		}
-+	}
-+	if (!have_fw) {
-+		printf("SWEET TOUCH(apollo): no fw, doing reset sequence\n");
++	/*
++	 * The vendor probe reads FWINFO repeatedly and trusts it once the value
++	 * is stable.  There is no firmware download here either: /vendor/firmware
++	 * and /vendor/firmware_mnt carry no Novatek .bin and the vendor kernel
++	 * logs no download, so the chip's own flash already holds the firmware.
++	 */
++	if (!tsp_fw_info_stable(&xmax, &ymax, &ver)) {
++		printf("SWEET TOUCH(apollo): no valid fw info, doing vendor reset sequence\n");
 +		tsp_reset();
 +		(void)tsp_chip_id();
-+		for (int i = 0; i < 3 && !have_fw; ++i) {
-+			have_fw = tsp_fw_info(&xmax, &ymax, &ver);
-+			if (!have_fw) {
-+				tsp_delay(10);
-+			}
++		if (!tsp_fw_info_stable(&xmax, &ymax, &ver)) {
++			printf("SWEET TOUCH(apollo): still no valid fw info "
++			    "(irq=%#x, gpio39=%u)\n", tsp.last_irq, tsp_gpio_in(39));
++			return;
 +		}
-+	}
-+	if (!have_fw) {
-+		printf("SWEET TOUCH(apollo): no fw info (irq=%#x, gpio39=%u); chip "
-+		    "likely in bootloader, needs nt36675 fw download\n",
-+		    tsp.last_irq, tsp_gpio_in(39));
-+		return;
 +	}
 +	tsp.xmax = xmax;
 +	tsp.ymax = ymax;
@@ -789,3 +835,27 @@ new file mode 100644
 +	}
 +}
 +#endif /* ARM64_BOARD_CONFIG_SWEET */
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 6b926fe..f9e2130 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -52,6 +52,8 @@ static void sweet_log_start(void);
+ extern void sweet_sample_start(void);
+ extern void sweet_keys_init(void);
+ extern void sweet_touch_init(void);
++extern void apollo_keys_init(void);
++extern void apollo_touch_init(void);
+ extern void sweet_usb_probe(void);
+ 
+ #define REG_CAP         0x00
+@@ -657,8 +659,8 @@ sweet_ufs_init(void)
+ 	sweet_log_start();
+ 	sweet_sample_start();
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+-	sweet_keys_init();
+-	sweet_touch_init();
++	apollo_keys_init();
++	apollo_touch_init();
+ 	sweet_usb_probe();
+ 	return 0;
+ }
