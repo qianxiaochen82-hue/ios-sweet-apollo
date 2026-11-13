@@ -2,25 +2,42 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 index ef64824..f6424a3 100644
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -473,6 +473,95 @@ bsd_rooted_ramdisk(void)
+@@ -473,6 +473,263 @@ bsd_rooted_ramdisk(void)
   * of the tro_ucred field so that the uthread structure can be
   * used like any other.
   */
 +#if defined(ARM64_BOARD_CONFIG_SWEET)
-+/* SWEET bring-up: progress blocks drawn straight into the framebuffer, so the
-+ * boot stage stays readable even when the console output is taken over by the
-+ * log system. One block per completed stage; a block at index 13 toggles every
-+ * five seconds to show the kernel is still running. */
++/* SWEET bring-up eyes. The kprintf/console text path stops delivering to the
++ * framebuffer somewhere around bsd_init entry, while the framebuffer itself
++ * is still scanning out (the boot logo stays and our pixels appear). So we
++ * draw the progress ourselves, straight into the framebuffer:
++ *   row 0: one block per completed stage (stage 1..8)
++ *   row 1: one block per setconf/vfs_mountroot attempt
++ *   row 2: sixteen white blocks before vfs_mountroot, one red block at
++ *          err & 15 when it fails
++ *   row 3: eight bits of the heartbeat tick, so liveness is readable
++ *          without any text at all
++ * plus a text banner at y=1600 drawn with the kernel's own 8x16 console
++ * font (iso_font), which needs neither kprintf nor the video console. */
 +#include <kern/thread.h>
 +/* declared in <machine/machine_routines.h> only for PEXPERT/MACH_PRIVATE */
 +extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
++/* osfmk/console/iso_font.c, compiled into video_console.c */
++extern unsigned char iso_font[256 * 16];
 +
-+#define SWEET_STAMP_FB   ((volatile uint32_t *)(uintptr_t)0x9c000000)
-+#define SWEET_STAMP_W    1080u
++#define SWEET_STAMP_FB     ((volatile uint32_t *)(uintptr_t)0x9c000000)
++#define SWEET_STAMP_W      1080u
++#define SWEET_STAMP_H      2400u
 +#define SWEET_STAMP_STRIDE (4320u / 4)
++#define SWEET_TEXT_Y       1600u
++#define SWEET_TEXT_LINE_H  40u
++#define SWEET_TEXT_SCALE   2u   /* 8x16 glyphs become 16x32 cells */
++#define SWEET_TEXT_SLOTS   8u   /* 7 rolling lines + 1 heartbeat line */
++
 +static volatile uint32_t *sweet_stamp_base;
 +static unsigned sweet_stamp_stage;
 +static unsigned sweet_mount_tries;
++static unsigned sweet_text_next;
 +
 +static volatile uint32_t *
 +sweet_stamp_fb(void)
@@ -33,21 +50,24 @@ index ef64824..f6424a3 100644
 +}
 +
 +static void
-+sweet_stamp_block_at(unsigned row, unsigned index, uint32_t color)
++sweet_fill(unsigned x0, unsigned y0, unsigned w, unsigned h, uint32_t color)
 +{
 +	volatile uint32_t *fb = sweet_stamp_fb();
-+	unsigned x0, y0;
 +
 +	if (fb == NULL) {
 +		return;
 +	}
-+	x0 = 8 + index * 72;
-+	y0 = 8 + row * 80;
-+	for (unsigned y = y0; y < y0 + 64 && y < 2400; y++) {
-+		for (unsigned x = x0; x < x0 + 64 && x < SWEET_STAMP_W; x++) {
++	for (unsigned y = y0; y < y0 + h && y < SWEET_STAMP_H; y++) {
++		for (unsigned x = x0; x < x0 + w && x < SWEET_STAMP_W; x++) {
 +			fb[y * SWEET_STAMP_STRIDE + x] = color;
 +		}
 +	}
++}
++
++static void
++sweet_stamp_block_at(unsigned row, unsigned index, uint32_t color)
++{
++	sweet_fill(8 + index * 72, 8 + row * 80, 64, 64, color);
 +	__asm__ volatile("dsb sy" ::: "memory");
 +}
 +
@@ -57,30 +77,178 @@ index ef64824..f6424a3 100644
 +	sweet_stamp_block_at(0, index, color);
 +}
 +
++/* one glyph of the kernel's own console font, scaled up */
++static void
++sweet_glyph(unsigned x0, unsigned y0, unsigned ch)
++{
++	volatile uint32_t *fb = sweet_stamp_fb();
++	const unsigned idx = (ch & 0xffu) * 16u;
++
++	if (fb == NULL) {
++		return;
++	}
++	for (unsigned gy = 0; gy < 16; gy++) {
++		unsigned bits = iso_font[idx + gy];
++		for (unsigned gx = 0; gx < 8; gx++) {
++			uint32_t color = (bits & (0x80u >> gx)) ?
++			    0xffffffffu : 0xff000000u;
++			for (unsigned sy = 0; sy < SWEET_TEXT_SCALE; sy++) {
++				unsigned y = y0 + gy * SWEET_TEXT_SCALE + sy;
++				if (y >= SWEET_STAMP_H) {
++					continue;
++				}
++				for (unsigned sx = 0; sx < SWEET_TEXT_SCALE; sx++) {
++					unsigned x = x0 + gx * SWEET_TEXT_SCALE + sx;
++					if (x < SWEET_STAMP_W) {
++						fb[y * SWEET_STAMP_STRIDE + x] = color;
++					}
++				}
++			}
++		}
++	}
++}
++
++static void
++sweet_text_at(unsigned slot, const char *s)
++{
++	unsigned y = SWEET_TEXT_Y + (slot % SWEET_TEXT_SLOTS) * SWEET_TEXT_LINE_H;
++	unsigned x = 8;
++
++	sweet_fill(0, y, SWEET_STAMP_W, SWEET_TEXT_LINE_H, 0xff000000u);
++	for (; *s != '\0' && (x + 8u * SWEET_TEXT_SCALE) <= SWEET_STAMP_W; s++) {
++		sweet_glyph(x, y + 4, (unsigned char)*s);
++		x += 8u * SWEET_TEXT_SCALE;
++	}
++	__asm__ volatile("dsb sy" ::: "memory");
++}
++
++static char *
++sweet_stpcpy(char *d, const char *s)
++{
++	while ((*d = *s) != '\0') {
++		d++;
++		s++;
++	}
++	return d;
++}
++
++static char *
++sweet_stpdec(char *d, unsigned v)
++{
++	char tmp[12];
++	unsigned n = 0;
++
++	do {
++		tmp[n++] = (char)('0' + (v % 10u));
++		v /= 10u;
++	} while (v != 0);
++	while (n != 0) {
++		*d++ = tmp[--n];
++	}
++	return d;
++}
++
++static char *
++sweet_stphex(char *d, unsigned v)
++{
++	static const char digits[] = "0123456789abcdef";
++	char tmp[8];
++	unsigned n = 0;
++
++	do {
++		tmp[n++] = digits[v & 15u];
++		v >>= 4;
++	} while (v != 0);
++	*d++ = '0';
++	*d++ = 'x';
++	while (n != 0) {
++		*d++ = tmp[--n];
++	}
++	return d;
++}
++
++/* append a line to the rolling banner */
++static void
++sweet_log(const char *msg)
++{
++	sweet_text_at(sweet_text_next % (SWEET_TEXT_SLOTS - 1), msg);
++	sweet_text_next++;
++}
++
++/* fixed line at the bottom of the banner, refreshed by the heartbeat */
++static void
++sweet_status(const char *msg)
++{
++	sweet_text_at(SWEET_TEXT_SLOTS - 1, msg);
++}
++
 +static void
 +sweet_stage(unsigned stage)
 +{
++	char buf[32];
++	char *p = buf;
++
 +	sweet_stamp_stage = stage;
 +	for (unsigned i = 1; i <= stage; i++) {
 +		sweet_stamp_block(i, 0xff00c800u);
 +	}
-+	/* the console text overwrites the top rows, so say it in text too;
-+	 * printf may no longer reach fbcon here, so the blocks are the truth. */
++	p = sweet_stpcpy(p, "STAGE ");
++	p = sweet_stpdec(p, stage);
++	*p = '\0';
++	sweet_log(buf);
 +	printf("SWEET BSDSTAGE %u\n", stage);
++}
++
++static void
++sweet_mount_try(void)
++{
++	char buf[32];
++	char *p = buf;
++
++	++sweet_mount_tries;
++	sweet_stamp_block_at(1, sweet_mount_tries, 0xffff8000u);
++	p = sweet_stpcpy(p, "MOUNT TRY ");
++	p = sweet_stpdec(p, sweet_mount_tries);
++	*p = '\0';
++	sweet_log(buf);
++}
++
++static void
++sweet_vfs_err(int err)
++{
++	char buf[32];
++	char *p = buf;
++
++	p = sweet_stpcpy(p, "VFS ERR ");
++	p = sweet_stphex(p, (unsigned)err);
++	*p = '\0';
++	sweet_log(buf);
 +}
 +
 +static void
 +sweet_stage_thread(void *arg, wait_result_t wres)
 +{
 +	unsigned tick = 0;
++	char buf[32];
++	char *p;
 +
 +	(void)arg;
 +	(void)wres;
 +	for (;;) {
 +		IOSleep(5000);
-+		/* which stage the main thread is parked at, and that we still run */
-+		printf("SWEET HB stage=%u tick=%u\n", sweet_stamp_stage, ++tick);
-+		sweet_stamp_block(13, (tick & 1) ? 0xff0000ffu : 0xff000000u);
++		tick++;
++		/* row 3 shows the tick in binary: a quiet, text-free liveness test */
++		for (unsigned b = 0; b < 8; b++) {
++			sweet_stamp_block_at(3, b,
++			    ((tick >> b) & 1u) ? 0xff00a0ffu : 0xff202020u);
++		}
++		p = sweet_stpcpy(buf, "HB STAGE ");
++		p = sweet_stpdec(p, sweet_stamp_stage);
++		p = sweet_stpcpy(p, " TICK ");
++		p = sweet_stpdec(p, tick);
++		*p = '\0';
++		sweet_status(buf);
++		printf("SWEET HB stage=%u tick=%u\n", sweet_stamp_stage, tick);
 +	}
 +}
 +
@@ -98,16 +266,17 @@ index ef64824..f6424a3 100644
  void
  bsd_init(void)
  {
-@@ -491,6 +567,8 @@ bsd_init(void)
+@@ -491,6 +748,9 @@ bsd_init(void)
  #endif
  
  	printf("SWEET PROBE: bsd_init enter\n");
++	sweet_log("SWEET BSD INIT");
 +	sweet_stage(1);
 +	sweet_stage_heartbeat();
  
  	/*
  	 * VM and pmap are up here, so the apollo keys/touch bring-up can run.
-@@ -505,6 +583,7 @@ bsd_init(void)
+@@ -505,6 +765,7 @@ bsd_init(void)
  		apollo_touch_init();
  		printf("SWEET PROBE: apollo input init done\n");
  	}
@@ -115,7 +284,7 @@ index ef64824..f6424a3 100644
  
  #define DEBUG_BSDINIT 1
  
-@@ -718,6 +797,7 @@ bsd_init(void)
+@@ -718,6 +979,7 @@ bsd_init(void)
  	extern void sweet_hfs_register(void);
  	sweet_hfs_register();
  #endif
@@ -123,12 +292,11 @@ index ef64824..f6424a3 100644
  
  #if CONFIG_PROC_UUID_POLICY
  	/* Initial proc_uuid_policy subsystem */
-@@ -889,12 +971,19 @@ bsd_init(void)
+@@ -889,12 +1151,19 @@ bsd_init(void)
  		int err;
  
  		bsd_init_kprintf("calling setconf\n");
-+		printf("SWEET MOUNT: setconf try %u\n", ++sweet_mount_tries);
-+		sweet_stamp_block_at(1, sweet_mount_tries, 0xffff8000u);
++		sweet_mount_try();
 +		sweet_stage(4);
  		setconf();
  #if CONFIG_NETBOOT
@@ -143,7 +311,8 @@ index ef64824..f6424a3 100644
  			break;
  		}
 +		sweet_stamp_block_at(2, (unsigned)err & 15u, 0xffff0000u);
-@@ -967,6 +1048,8 @@ bsd_init(void)
++		sweet_vfs_err(err);
+@@ -967,6 +1236,8 @@ bsd_init(void)
  	}
  
  
@@ -152,7 +321,7 @@ index ef64824..f6424a3 100644
  #if CONFIG_NETBOOT
  	if (netboot) {
  		int err;
-@@ -1061,8 +1144,10 @@ bsd_init(void)
+@@ -1061,14 +1332,17 @@ bsd_init(void)
  
  	bsd_init_kprintf("calling bsd_utaskbootstrap\n");
  	bsd_utaskbootstrap();
@@ -163,3 +332,10 @@ index ef64824..f6424a3 100644
  
  	bsd_init_kprintf("calling mountroot_post_hook\n");
  
+ #if XNU_TARGET_OS_OSX
+ 	/* invoke post-root-mount hook */
+ 	if (mountroot_post_hook != NULL) {
+ 		mountroot_post_hook();
+ 	}
+ #endif
++	sweet_stage(8);
