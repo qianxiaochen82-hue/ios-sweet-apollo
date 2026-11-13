@@ -1,0 +1,75 @@
+diff --git a/iokit/Kernel/IOStartIOKit.cpp b/iokit/Kernel/IOStartIOKit.cpp
+index d74c063..d22ca75 100644
+--- a/iokit/Kernel/IOStartIOKit.cpp
++++ b/iokit/Kernel/IOStartIOKit.cpp
+@@ -168,6 +168,9 @@ InitIOKit(void *dtTop)
+ 	if (record_startup_extensions_function) {
+ 		record_startup_extensions_function();
+ 	}
++	OSKextLog(/* kext */ NULL,
++	    kOSKextLogErrorLevel | kOSKextLogGeneralFlag,
++	    "SWEET: InitIOKit done");
+ }
+ 
+ void
+@@ -175,6 +178,9 @@ ConfigureIOKit(void)
+ {
+ 	assert(gRootNub != NULL);
+ 	gRootNub->configureDefaults();
++	OSKextLog(/* kext */ NULL,
++	    kOSKextLogErrorLevel | kOSKextLogGeneralFlag,
++	    "SWEET: ConfigureIOKit done");
+ }
+ 
+ void
+diff --git a/libsa/bootstrap.cpp b/libsa/bootstrap.cpp
+index f0f770a..e5a86bc 100644
+--- a/libsa/bootstrap.cpp
++++ b/libsa/bootstrap.cpp
+@@ -86,6 +86,16 @@ extern "C" bool IORamDiskBSDRoot(void);
+ *********************************************************************/
+ #define CONST_STRLEN(str) (sizeof(str) - 1)
+ 
++/* SWEET bring-up markers: error level, so they show up in the console
++ * even with the default kext log filter. */
++static void
++sweet_kld_mark(const char * what)
++{
++	OSKextLog(/* kext */ NULL,
++	    kOSKextLogErrorLevel | kOSKextLogGeneralFlag,
++	    "SWEET KLD: %s", what);
++}
++
+ #if PRAGMA_MARK
+ #pragma mark Kernel Component Kext Identifiers
+ #endif
+@@ -207,6 +217,7 @@ KLDBootstrap::readStartupExtensions(void)
+ 	} else {
+ 		readBooterExtensions();
+ 	}
++	sweet_kld_mark("startup extensions read");
+ 
+ 	kernel_mach_header_t *akc_mh;
+ 	akc_mh = (kernel_mach_header_t*)PE_get_kc_header(KCKindAuxiliary);
+@@ -215,9 +226,13 @@ KLDBootstrap::readStartupExtensions(void)
+ 	}
+ 
+ 	loadKernelComponentKexts();
++	sweet_kld_mark("component kexts done");
+ 	loadKernelExternalComponents();
++	sweet_kld_mark("external components done");
+ 	readBuiltinPersonalities();
++	sweet_kld_mark("builtin personalities done");
+ 	OSKext::sendAllKextPersonalitiesToCatalog(true);
++	sweet_kld_mark("personalities sent");
+ 
+ 	return;
+ }
+@@ -494,6 +509,7 @@ KLDBootstrap::readBooterExtensions(void)
+ 	} /* while ( (deviceTreeName = OSDynamicCast(OSString, ...) ) ) */
+ 
+ finish:
++	sweet_kld_mark("booter extensions done");
+ 	return;
+ }
+ 

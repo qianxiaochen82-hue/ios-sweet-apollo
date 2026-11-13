@@ -121,11 +121,6 @@ def build(seed=None, qemu=False, highmem=False):
         ('effective-production-status-ap', u32(0)),
         ('certificate-security-mode', u32(1)),
         ('effective-security-mode-sep', u32(1)),
-        # No booter-provided kexts: everything is linked into the kernel.
-        # An explicitly empty booter-data keeps OSKext's booter-dictionary
-        # scan from falling back to a regular device-tree node (which showed
-        # up as '"name" not a kext' / '"APL,phandle" not a kext').
-        ('booter-data', b''),
     ], [node('memory-map', [ph()]),
         # Local boot policy (kern_csr.c): SIP relaxed like `csrutil disable`
         # (lp-sip0: untrusted kexts, unrestricted FS, task_for_pid, kernel
