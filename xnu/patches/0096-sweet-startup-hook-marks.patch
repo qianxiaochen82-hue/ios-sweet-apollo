@@ -1,0 +1,63 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 2d00a51..03ec633 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -792,6 +792,37 @@ sweet_fb_mark(const char *tag)
+ 	printf("SWEET MARK %u %s\n", sweet_mark_count, tag);
+ }
+ 
++/*
++ * Called from kernel_startup_initialize_upto() before each startup hook runs.
++ * boot-arg startup_debug is not parsed by this shim, so print through the
++ * console and paint into our own banner; the last one seen is the hook that
++ * never returns.  func is split into two 32-bit halves because sweet_stphex
++ * only handles unsigned.
++ */
++void
++sweet_fb_hook(unsigned subsystem, unsigned rank, const void *func)
++{
++	char buf[64];
++	char *p = buf;
++	uintptr_t f = (uintptr_t)func;
++
++	++sweet_mark_count;
++	p = sweet_stpcpy(p, "#");
++	p = sweet_stpdec(p, sweet_mark_count);
++	p = sweet_stpcpy(p, " HOOK ");
++	p = sweet_stpdec(p, subsystem);
++	p = sweet_stpcpy(p, "/");
++	p = sweet_stpdec(p, rank);
++	p = sweet_stpcpy(p, " ");
++	p = sweet_stphex(p, (unsigned)(f >> 32));
++	p = sweet_stpcpy(p, ":");
++	p = sweet_stphex(p, (unsigned)f);
++	*p = '\0';
++	sweet_log(buf);
++	printf("SWEET HOOK %u sub=%u rank=%u fn=0x%llx\n", sweet_mark_count,
++	    subsystem, rank, (unsigned long long)f);
++}
++
+ static void
+ sweet_stage_thread(void *arg, wait_result_t wres)
+ {
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index 15e83bf..2a40acc 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -407,6 +407,16 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
+ 		}
+ 		startup_phase = cur->subsystem - 1;
+ 		kernel_startup_log(cur->subsystem);
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++		{
++			/* boot-arg startup_debug never got parsed on this shim, so
++			 * paint each hook through our own framebuffer channel:
++			 * the last one on screen is the hook that hangs. */
++			extern void sweet_fb_hook(unsigned, unsigned, const void *);
++			sweet_fb_hook((unsigned)cur->subsystem,
++			    (unsigned)cur->rank, (const void *)cur->func);
++		}
++#endif
+ 		cur->func(cur->arg);
+ 		startup_entry_cur = ++cur;
+ 	}
