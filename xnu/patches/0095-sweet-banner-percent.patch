@@ -1,0 +1,75 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 9123aa6..2d00a51 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -624,6 +624,54 @@ sweet_stpcpy(char *d, const char *s)
+ 	return d;
+ }
+ 
++static char *sweet_stpdec(char *d, unsigned v);
++
++/*
++ * Coarse, deliberately unambitious progress: the first 45% is the mark
++ * sequence up to IOKIT RET (19 marks on apollo), the rest is the eight
++ * bsd_init stages.  It is a "how far did it get" indicator, not a timing
++ * estimate, so it only moves when a mark or a stage actually happens.
++ */
++#define SWEET_PHASE_A_MARKS 19u
++
++static unsigned
++sweet_percent(void)
++{
++	unsigned m;
++
++	if (sweet_stamp_stage != 0) {
++		unsigned s = sweet_stamp_stage > 8u ? 8u : sweet_stamp_stage;
++
++		return 45u + (s * 55u) / 8u;
++	}
++	m = sweet_mark_count > SWEET_PHASE_A_MARKS ?
++	    SWEET_PHASE_A_MARKS : sweet_mark_count;
++	return (m * 45u) / SWEET_PHASE_A_MARKS;
++}
++
++static void
++sweet_progress(void)
++{
++	unsigned y = SWEET_TEXT_Y - SWEET_TEXT_LINE_H;
++	unsigned x = 8;
++	char buf[16];
++	char *p = buf;
++	const char *s;
++
++	p = sweet_stpcpy(p, "P ");
++	p = sweet_stpdec(p, sweet_percent());
++	p = sweet_stpcpy(p, "%");
++	*p = '\0';
++
++	sweet_fill(0, y, SWEET_STAMP_W, SWEET_TEXT_LINE_H, 0xff000000u);
++	for (s = buf; *s != '\0'; s++) {
++		sweet_glyph(x, y + 4, (unsigned char)*s);
++		x += 8u * SWEET_TEXT_SCALE;
++	}
++	__asm__ volatile("dsb sy" ::: "memory");
++}
++
++
+ static char *
+ sweet_stpdec(char *d, unsigned v)
+ {
+@@ -665,6 +713,7 @@ sweet_log(const char *msg)
+ {
+ 	sweet_text_at(sweet_text_next % (SWEET_TEXT_SLOTS - 1), msg);
+ 	sweet_text_next++;
++	sweet_progress();
+ }
+ 
+ /* fixed line at the bottom of the banner, refreshed by the heartbeat */
+@@ -766,6 +815,7 @@ sweet_stage_thread(void *arg, wait_result_t wres)
+ 		p = sweet_stpdec(p, tick);
+ 		*p = '\0';
+ 		sweet_status(buf);
++		sweet_progress();
+ 		printf("SWEET HB stage=%u tick=%u\n", sweet_stamp_stage, tick);
+ 	}
+ }
