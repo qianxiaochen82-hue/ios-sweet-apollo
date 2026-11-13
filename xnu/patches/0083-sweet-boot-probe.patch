@@ -1,7 +1,7 @@
-diff --git a/xnu/bsd/kern/bsd_init.c b/xnu/bsd/kern/bsd_init.c
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 index bb2a2bf..5e95078 100644
---- a/xnu/bsd/kern/bsd_init.c
-+++ b/xnu/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
 @@ -490,7 +490,9 @@ bsd_init(void)
  	platform_stall_panic_or_spin(PLATFORM_STALL_XNU_LOCATION_BSD_INIT);
  #endif
@@ -13,10 +13,10 @@ index bb2a2bf..5e95078 100644
  
  #if DEBUG_BSDINIT
  #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
-diff --git a/xnu/iokit/Kernel/arm/hid/SweetHID.cpp b/xnu/iokit/Kernel/arm/hid/SweetHID.cpp
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
 index 27bc49d..56a5de8 100644
---- a/xnu/iokit/Kernel/arm/hid/SweetHID.cpp
-+++ b/xnu/iokit/Kernel/arm/hid/SweetHID.cpp
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
 @@ -31,6 +31,16 @@
  
  extern "C" uint64_t mach_absolute_time(void);
