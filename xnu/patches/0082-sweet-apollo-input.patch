@@ -245,7 +245,7 @@
 
 --- /dev/null
 +++ b/bsd/dev/apollo_touch.c
-@@ -0,0 +1,458 @@
+@@ -0,0 +1,519 @@
 +/*
 + * apollo (Redmi K30S Ultra / SM8250 "kona") Novatek NT36675 touch.
 + *
@@ -259,15 +259,19 @@
 + *   nvt_sw_reset_idle()   0xAA -> SWRST_N8_ADDR  0x3F0FE
 + *   nvt_bootloader_reset()0x69 -> SWRST_N8_ADDR  0x3F0FE, then
 + *                         0x00 -> SPI_RD_FAST_ADDR 0x3F310
-+ *   nvt_get_fw_info()     page 0x22D00|EVENT_MAP_FWINFO, read
-+ *                         EVENT_BUF_SIZE(17) bytes: fw_ver, ~fw_ver, x/y max
-+ *   report (protocol A)   page 0x22D00, read 1 + 6*10 bytes:
-+ *                         count, then per point {id<<3|status, xh, yh, xy, w, ?}
-+ *                         x = xh<<4 | xy>>4,  y = yh<<4 | xy&0xF,  status!=0 = down
++ *   nvt_get_fw_info()     page 0x22D00|EVENT_MAP_FWINFO (0x78), read 17 bytes:
++ *                         fw_ver, ~fw_ver, x_num, y_num, xmax(2), ymax(2), ...
++ *   nvt_ts_check_chip_ver_trim() page 0x1F600, command 0x4E, 6 id bytes
++ *   report (protocol B)   read POINT_DATA_LEN(65) bytes; slot i at 6*i:
++ *                         {id<<3|status, xh, yh, xy, w, ?},
++ *                         x = xh<<4 | xy>>4, y = yh<<4 | xy&0xF,
++ *                         down when status is 1 (enter) or 2 (move)
 + *
 + * Transport: polled GENI SPI (QUPv3 wrapper 0, SE4 at 0x990000), 8 bit words,
-+ * mode 0, 15 MHz.  All transfers are <= 16 bytes so the 64 word FIFO never
-+ * overflows and no DMA descriptor programming is needed.
++ * mode 0, 15 MHz (spi-max-frequency in the dts).  IRQ 605 / gpio39 is not
++ * wired up in XNU; the point buffer is polled at ~1 kHz instead, which is
++ * the same read the vendor's threaded handler performs.  All transfers are
++ * <= 16 bytes so the FIFO never overflows and no DMA is needed.
 + *
 + * Board facts (arch/arm64/boot/dts/venor/qcom/kona-qupv3.dtsi,
 + * xiaomi-sm8250-common.dtsi, /proc/interrupts on the live phone):
@@ -305,16 +309,20 @@
 +#define GCC_CBCR_M_AHB      (1u << 6)
 +#define GCC_RCG_WRAP0_S4_CMD 0x174d0u
 +#define GCC_RCG_WRAP0_S4_CFG 0x174d4u
-+#define RCG_UPDATE          1u
-+#define RCG_ROOT_EN         (1u << 8)
++#define RCG_UPDATE          (1u << 0)
++#define RCG_ROOT_EN         (1u << 1)
 +#define RCG_SRC_SEL(s)      ((uint32_t)(s) << 8)
 +#define RCG_MODE_BYPASS     (0u << 12)
 +#define P_GPLL0_OUT_EVEN    2u   /* gcc_parent_names_0[]: bi_tcxo, gpll0, ... */
 +
-+/* GENI SE (common block) */
++/* GENI SE (common block), offsets from include/linux/qcom-geni-se.h */
++#define SE_GENI_FORCE_DEF   0x020u
++#define SE_GENI_OUTPUT_CTRL 0x024u
++#define SE_GENI_CGC_CTRL    0x028u
 +#define SE_GENI_STATUS      0x040u
 +#define SE_GENI_SER_M_CLK   0x048u
-+#define SE_GENI_S_CMD0      0x630u
++#define SE_GENI_CLK_SEL     0x07cu
++#define SE_GENI_DMA_MODE    0x258u
 +#define SE_GENI_M_CMD0      0x600u
 +#define SE_GENI_M_CMD_CTRL  0x604u
 +#define SE_GENI_M_IRQ_STAT  0x610u
@@ -324,7 +332,15 @@
 +#define SE_GENI_RX_FIFO     0x780u
 +#define SE_GENI_TX_FIFO_ST  0x800u
 +#define SE_GENI_RX_FIFO_ST  0x804u
-+#define SE_GENI_DMA_MODE    0x258u
++#define SE_GENI_TX_WM       0x80cu
++#define SE_GENI_RX_WM       0x810u
++#define SE_GENI_RX_RFR_WM   0x814u
++#define SE_GSI_EVENT_EN     0xe18u
++#define SE_IRQ_EN           0xe1cu
++#define SE_DMA_GENERAL_CFG  0xe30u
++#define CGC_ON_ALL          0x7fu   /* DEFAULT_CGC_EN */
++#define OUT_CTRL_DEFAULT    0x7fu   /* DEFAULT_IO_OUTPUT_CTRL_MSK */
++#define DMA_GENERAL_ON      0x0fu
 +
 +/* GENI SPI block */
 +#define SE_SPI_CPHA         0x224u
@@ -339,8 +355,8 @@
 +#define SE_SPI_SLAVE_EN     0x2bcu
 +
 +#define M_CMD_DONE          (1u << 0)
-+#define M_CMD_ERRORS        (0x0eu | (1u << 9) | (1u << 10) | (1u << 12) | \
-+                             (1u << 13) | (3u << 24) | (3u << 28))
++#define M_CMD_ERRORS        ((1u << 1) | (1u << 2) | (1u << 3))
++#define M_IRQ_EN_BITS       0xfu
 +#define M_CMD_CLEAR         0xffffffffu
 +#define OP_TX               1u
 +#define OP_RX               2u
@@ -349,11 +365,13 @@
 +#define OP_CS_DEASSERT      9u
 +
 +#define TSP_CHUNK           16u
++#define TSP_ENG_RST         0x7fff80u   /* ENG_RST_ADDR in nt36xxx.c */
 +#define TSP_SWRST_N8        0x3f0feu
 +#define TSP_RD_FAST         0x3f310u
++#define TSP_TRIM_ADDR       0x1f600u
 +#define TSP_EVENT_BUF       0x22d00u
 +#define TSP_FWINFO_OFF      0x78u
-+#define TSP_POINT_LEN       62u     /* 1 + 6*10 + 1 spare */
++#define TSP_POINT_LEN       65u     /* POINT_DATA_LEN, protocol B */
 +#define TSP_MAX_FINGER      10
 +
 +static struct {
@@ -361,6 +379,7 @@
 +	bool up;
 +	int sleep_chan;
 +	uint32_t last_irq;
++	int xmax, ymax;
 +	int x[TSP_MAX_FINGER], y[TSP_MAX_FINGER];
 +} tsp;
 +
@@ -414,15 +433,16 @@
 +static void
 +tsp_mux_qup4(void)
 +{
-+	/* gpio8..11 carry "qup4"; only touch pins that are still plain GPIO. */
++	/* gpio8..11 carry "qup4"; pinctrl-kona.c PINGROUP(8..11, NORTH, qup4)
++	 * puts qup4 at function index 1 (index 0 is plain gpio). */
 +	for (unsigned pin = 8; pin <= 11; ++pin) {
 +		uint32_t cfg = tsp_rd(tsp.tlmm, TL_CFG(pin));
 +		uint32_t mux = (cfg >> 2) & 0xfu;
 +		if (cfg == 0xffffffffu) {
 +			continue;
 +		}
-+		if (mux == 0) {
-+			tsp_wr(tsp.tlmm, TL_CFG(pin), (cfg & ~(0xfu << 2)) | (4u << 2));
++		if (mux != 1u) {
++			tsp_wr(tsp.tlmm, TL_CFG(pin), (cfg & ~(0xfu << 2)) | (1u << 2));
 +		}
 +		printf("SWEET TOUCH: gpio%u cfg=%#x mux=%u -> %#x\n", pin, cfg, mux,
 +		    tsp_rd(tsp.tlmm, TL_CFG(pin)));
@@ -439,10 +459,8 @@
 +		    cbcr | GCC_CBCR_S4 | GCC_CBCR_M_AHB);
 +	}
 +	/* SE clock source: bypass gpll0_out_even (150 MHz) so the divider math
-+	 * below is exact.  Root enable last. */
-+	if (tsp_rd(tsp.gcc, GCC_RCG_WRAP0_S4_CMD) & RCG_ROOT_EN) {
-+		tsp_wr(tsp.gcc, GCC_RCG_WRAP0_S4_CMD, RCG_UPDATE);
-+	}
++	 * below is exact.  Writing CFG also drops CFG_HW_CLK_CTRL (bit 20),
++	 * which the boot chain may have set.  Root enable last. */
 +	tsp_wr(tsp.gcc, GCC_RCG_WRAP0_S4_CFG, RCG_SRC_SEL(P_GPLL0_OUT_EVEN) |
 +	    RCG_MODE_BYPASS);
 +	tsp_wr(tsp.gcc, GCC_RCG_WRAP0_S4_CMD, RCG_UPDATE);
@@ -502,12 +520,9 @@
 +		tsp_wr(tsp.se, SE_GENI_TX_FIFO, tx[i]);
 +	}
 +	bool ok = tsp_wait_done();
-+	if (ok && rlen) {
++	if (ok && rx) {
 +		for (unsigned i = 0; i < rlen; ++i) {
-+			uint32_t w = tsp_rd(tsp.se, SE_GENI_RX_FIFO);
-+			if (i < tlen) {
-+				rx[i] = (uint8_t)w;
-+			}
++			rx[i] = (uint8_t)tsp_rd(tsp.se, SE_GENI_RX_FIFO);
 +		}
 +	}
 +	(void)tsp_cmd(OP_CS_DEASSERT);
@@ -517,8 +532,23 @@
 +static bool
 +tsp_se_init(void)
 +{
++	/* Mirrors geni_se_io_init() + geni_se_init() + geni_se_select_fifo_mode()
++	 * from drivers/soc/qcom/qcom-geni-se.c. */
++	uint32_t v;
++	v = tsp_rd(tsp.se, SE_GENI_CGC_CTRL);
++	tsp_wr(tsp.se, SE_GENI_CGC_CTRL, v | CGC_ON_ALL);
++	v = tsp_rd(tsp.se, SE_DMA_GENERAL_CFG);
++	tsp_wr(tsp.se, SE_DMA_GENERAL_CFG, v | DMA_GENERAL_ON);
++	tsp_wr(tsp.se, SE_GENI_OUTPUT_CTRL, OUT_CTRL_DEFAULT);
++	tsp_wr(tsp.se, SE_GENI_FORCE_DEF, 1);
++	tsp_wr(tsp.se, SE_GSI_EVENT_EN, 0);
++	tsp_wr(tsp.se, SE_GENI_M_IRQ_CLR, M_CMD_CLEAR);
++	tsp_wr(tsp.se, SE_GENI_M_IRQ_EN, M_IRQ_EN_BITS);
++	tsp_wr(tsp.se, SE_IRQ_EN, 0xfu);
 +	tsp_wr(tsp.se, SE_GENI_DMA_MODE, 0);
-+	tsp_wr(tsp.se, SE_GENI_M_IRQ_EN, 0);
++	tsp_wr(tsp.se, SE_GENI_TX_WM, 0);
++	tsp_wr(tsp.se, SE_GENI_RX_WM, 0);
++	tsp_wr(tsp.se, SE_GENI_RX_RFR_WM, TSP_CHUNK - 2);
 +	tsp_wr(tsp.se, SE_SPI_LOOPBACK, 0);   /* normal mode */
 +	tsp_wr(tsp.se, SE_SPI_CPHA, 0);       /* mode 0 */
 +	tsp_wr(tsp.se, SE_SPI_CPOL, 0);
@@ -527,8 +557,9 @@
 +	tsp_wr(tsp.se, SE_SPI_WORD_LEN, (8u - 4u) & 0x3ffu);
 +	tsp_wr(tsp.se, SE_SPI_DELAYS, 0);
 +	tsp_wr(tsp.se, SE_SPI_SLAVE_EN, 0);
-+	/* se_clk 150 MHz / (2 * (div + 1)) = 15 MHz */
-+	tsp_wr(tsp.se, SE_GENI_SER_M_CLK, (5u << 4) | 1u);
++	tsp_wr(tsp.se, SE_GENI_CLK_SEL, 0);   /* clk_sel = 0 */
++	/* 150 MHz / 10 = 15 MHz, matching spi-max-frequency in the dts. */
++	tsp_wr(tsp.se, SE_GENI_SER_M_CLK, (10u << 4) | 1u);
 +	printf("SWEET TOUCH: se status=%#x clk=%#x word=%#x\n",
 +	    tsp_rd(tsp.se, SE_GENI_STATUS),
 +	    tsp_rd(tsp.se, SE_GENI_SER_M_CLK),
@@ -585,34 +616,52 @@
 +static void
 +tsp_reset(void)
 +{
-+	(void)tsp_gpio_dir_out(38, 1);
-+	tsp_delay(10);
++	/* Vendor probe order: hold TP_RESX low, send the engineering reset
++	 * command (nvt_eng_reset), release reset, wait 10 ms, then let
++	 * nvt_ts_check_chip_ver_trim() issue the bootloader reset. */
 +	(void)tsp_gpio_dir_out(38, 0);
-+	tsp_delay(20);
++	tsp_delay(1);
++	(void)nt_write(TSP_ENG_RST, 0x5a);   /* MCU idle, ENG_RST_ADDR */
++	tsp_delay(1);
 +	(void)tsp_gpio_dir_out(38, 1);
-+	tsp_delay(50);
-+	(void)nt_write(TSP_SWRST_N8, 0x69);   /* bootloader reset */
-+	tsp_delay(20);
-+	(void)nt_write(TSP_RD_FAST, 0x00);    /* slow read, matches vendor init */
 +	tsp_delay(10);
++	(void)nt_write(TSP_SWRST_N8, 0x69);  /* bootloader reset */
++	tsp_delay(5);                        /* tBRST2FR */
++	(void)nt_write(TSP_RD_FAST, 0x00);   /* disable fast read */
++	tsp_delay(1);
++}
++
++/* nvt_ts_check_chip_ver_trim(): page 0x1F600, command 0x4E, 6 id bytes. */
++static bool
++tsp_chip_id(void)
++{
++	uint8_t b[6];
++	if (!nt_read(TSP_TRIM_ADDR | 0x4e, b, sizeof(b))) {
++		return false;
++	}
++	printf("SWEET TOUCH: chip id %02x %02x %02x %02x %02x %02x\n",
++	    b[0], b[1], b[2], b[3], b[4], b[5]);
++	return true;
 +}
 +
 +static bool
 +tsp_fw_info(uint16_t *xmax, uint16_t *ymax, uint8_t *ver)
 +{
-+	uint8_t b[18];
-+	if (!nt_read(TSP_EVENT_BUF | TSP_FWINFO_OFF, b, 17)) {
++	uint8_t b[17];
++	if (!nt_read(TSP_EVENT_BUF | TSP_FWINFO_OFF, b, sizeof(b))) {
 +		return false;
 +	}
 +	printf("SWEET TOUCH: fwinfo %02x %02x %02x %02x %02x %02x %02x %02x %02x | %02x %02x %02x %02x %02x %02x %02x %02x\n",
 +	    b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8],
 +	    b[9], b[10], b[11], b[12], b[13], b[14], b[15], b[16]);
++	/* Vendor layout: fw_ver, ~fw_ver, x_num, y_num, xmax(2), ymax(2),
++	 * ... max_button_num at index 9. */
 +	if ((uint8_t)(b[0] + b[1]) != 0xffu) {
 +		return false;
 +	}
 +	*ver = b[0];
-+	*xmax = (uint16_t)((b[2] << 8) | b[3]);
-+	*ymax = (uint16_t)((b[4] << 8) | b[5]);
++	*xmax = (uint16_t)((b[4] << 8) | b[5]);
++	*ymax = (uint16_t)((b[6] << 8) | b[7]);
 +	return true;
 +}
 +
@@ -620,37 +669,46 @@
 +tsp_thread(void *arg, wait_result_t result)
 +{
 +	int prev[TSP_MAX_FINGER];
-+	int last_count = -1;
++	int last_mask = -1;
 +	(void)arg;
 +	(void)result;
 +	for (int i = 0; i < TSP_MAX_FINGER; ++i) {
 +		prev[i] = 0;
 +	}
 +	for (;;) {
++		/* Protocol B: point_data[1 + 6*i] carries {id << 3 | status}. */
 +		uint8_t buf[TSP_POINT_LEN];
-+		if (nt_read(TSP_EVENT_BUF, buf, TSP_POINT_LEN)) {
-+			int count = buf[0] & 0x0fu;
-+			if (count != last_count) {
-+				printf("SWEET TOUCH: report count=%d\n", count);
-+				last_count = count;
-+			}
++		if (nt_read(TSP_EVENT_BUF, buf, sizeof(buf))) {
++			int mask = 0;
 +			for (int i = 0; i < TSP_MAX_FINGER; ++i) {
-+				bool down = i < count;
++				const uint8_t *d = &buf[i * 6];
++				unsigned id = d[0] >> 3;
++				unsigned status = d[0] & 0x07;
++				bool down = (id == (unsigned)i + 1u) &&
++				    (status == 1u || status == 2u);
 +				int x = 0, y = 0;
 +				if (down) {
-+					const uint8_t *d = &buf[1 + i * 6];
 +					x = (d[1] << 4) | (d[3] >> 4);
 +					y = (d[2] << 4) | (d[3] & 0x0f);
-+					if (d[0] == 0xffu) {
-+						continue;
++					if ((unsigned)x > tsp.xmax ||
++					    (unsigned)y > tsp.ymax) {
++						down = false;
 +					}
 +				}
-+				if (down != !!prev[i] || (down && (x != tsp.x[i] || y != tsp.y[i]))) {
++				if (down) {
++					mask |= 1 << i;
++				}
++				if (down != !!prev[i] ||
++				    (down && (x != tsp.x[i] || y != tsp.y[i]))) {
 +					prev[i] = down;
 +					tsp.x[i] = x;
 +					tsp.y[i] = y;
 +					sweet_hid_touch(i, down, x, y);
 +				}
++			}
++			if (mask != last_mask) {
++				printf("SWEET TOUCH: mask=%#x\n", mask);
++				last_mask = mask;
 +			}
 +			tsp_delay(1);
 +		} else {
@@ -689,11 +747,14 @@
 +		return;
 +	}
 +	tsp_reset();
++	(void)tsp_chip_id();
 +	if (!tsp_fw_info(&xmax, &ymax, &ver)) {
 +		printf("SWEET TOUCH(apollo): no fw info (irq=%#x, gpio39=%u)\n",
 +		    tsp.last_irq, tsp_gpio_in(39));
 +		return;
 +	}
++	tsp.xmax = xmax;
++	tsp.ymax = ymax;
 +	printf("SWEET TOUCH(apollo): fw=%#x xmax=%u ymax=%u\n", ver, xmax, ymax);
 +	tsp.up = true;
 +	kern_return_t kr = kernel_thread_start(tsp_thread, NULL, &thread);
