@@ -1,39 +1,40 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -106,8 +106,10 @@
- bsd/dev/memdev.c			standard
- bsd/dev/sweet_ufs.c			standard
+@@ -108,6 +108,8 @@
  bsd/dev/sweet_sample.c			standard
  bsd/dev/sweet_keys.c			standard
  bsd/dev/sweet_touch.c			standard
 +bsd/dev/apollo_keys.c			standard
 +bsd/dev/apollo_touch.c			standard
- bsd/dev/mem.c				standard
- bsd/dev/munge.c 			optional config_requires_u32_munging
- bsd/dev/unix_startup.c			standard
-
+ bsd/dev/sweet_rpmh.c			standard
+ bsd/dev/sweet_spmi.c			standard
+ bsd/dev/sweet_usb.c			standard
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
-@@ -49,3 +49,5 @@
- extern int hz;
- static void sweet_log_start(void);
+@@ -52,6 +52,8 @@
  extern void sweet_sample_start(void);
+ extern void sweet_keys_init(void);
+ extern void sweet_touch_init(void);
 +extern void apollo_keys_init(void);
 +extern void apollo_touch_init(void);
-
---- a/bsd/dev/sweet_ufs.c
-+++ b/bsd/dev/sweet_ufs.c
-@@ -601,6 +603,6 @@
+ extern void sweet_usb_probe(void);
+ 
+ #define REG_CAP         0x00
+@@ -657,8 +659,8 @@
  	sweet_log_start();
  	sweet_sample_start();
--	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
 -	sweet_keys_init();
 -	sweet_touch_init();
-+	/* apollo (kona): PM8150 keys/PON + Novatek NT36675 SPI touch. */
 +	apollo_keys_init();
 +	apollo_touch_init();
+ 	sweet_usb_probe();
  	return 0;
-
+ }
+diff --git a/bsd/dev/apollo_keys.c b/bsd/dev/apollo_keys.c
+new file mode 100644
 --- /dev/null
 +++ b/bsd/dev/apollo_keys.c
 @@ -0,0 +1,205 @@
@@ -242,7 +243,8 @@
 +	}
 +}
 +#endif /* ARM64_BOARD_CONFIG_SWEET */
-
+diff --git a/bsd/dev/apollo_touch.c b/bsd/dev/apollo_touch.c
+new file mode 100644
 --- /dev/null
 +++ b/bsd/dev/apollo_touch.c
 @@ -0,0 +1,541 @@
