@@ -1,0 +1,97 @@
+diff --git a/xnu/bsd/kern/bsd_init.c b/xnu/bsd/kern/bsd_init.c
+index bb2a2bf..5e95078 100644
+--- a/xnu/bsd/kern/bsd_init.c
++++ b/xnu/bsd/kern/bsd_init.c
+@@ -490,7 +490,9 @@ bsd_init(void)
+ 	platform_stall_panic_or_spin(PLATFORM_STALL_XNU_LOCATION_BSD_INIT);
+ #endif
+ 
+-#define DEBUG_BSDINIT 0
++	printf("SWEET PROBE: bsd_init enter\n");
++
++#define DEBUG_BSDINIT 1
+ 
+ #if DEBUG_BSDINIT
+ #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
+diff --git a/xnu/iokit/Kernel/arm/hid/SweetHID.cpp b/xnu/iokit/Kernel/arm/hid/SweetHID.cpp
+index 27bc49d..56a5de8 100644
+--- a/xnu/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/xnu/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -31,6 +31,16 @@
+ 
+ extern "C" uint64_t mach_absolute_time(void);
+ 
++/*
++ * apollo input drivers (bsd/dev/apollo_keys.c, bsd/dev/apollo_touch.c).
++ * They are started here, not from the UFS root path, because this kext's
++ * start() is known to run on kona (its log lines appear on screen) while
++ * sweet_ufs_init() is reached only at rootdev/mountroot time, after the
++ * point where this port currently stops.
++ */
++extern "C" void apollo_keys_init(void);
++extern "C" void apollo_touch_init(void);
++
+ /* One open client: the user client and its event callback. */
+ class IOHIDEventServiceClient : public OSObject {
+ 	OSDeclareDefaultStructors(IOHIDEventServiceClient);
+@@ -377,6 +387,7 @@ OSDefineMetaClassAndStructors(SweetHIDTouch, IOHIDEventService);
+ 
+ static SweetHIDButtons *gSweetButtons;
+ static SweetHIDTouch *gSweetTouch;
++static bool gSweetApolloDone;
+ 
+ bool
+ SweetHIDButtons::start(IOService *provider)
+@@ -384,15 +395,26 @@ SweetHIDButtons::start(IOService *provider)
+ 	if (!IOHIDEventService::start(provider)) {
+ 		return false;
+ 	}
+-	if (PE_parse_boot_argn("sweethidtest", &fTestSecs, sizeof(fTestSecs)) && fTestSecs) {
+-		fTest = IOTimerEventSource::timerEventSource(this, &SweetHIDButtons::testFired);
+-		if (fTest && _hidWorkLoop->addEventSource(fTest) == kIOReturnSuccess) {
+-			fTest->setTimeoutMS(fTestSecs * 1000);
+-		}
++	/*
++	 * Always run a 2 s heartbeat so the console shows whether kernel
++	 * timers still fire after the boot appears to stop. Boot-arg
++	 * sweethidtest=N keeps its old meaning (Home key test every N s).
++	 */
++	PE_parse_boot_argn("sweethidtest", &fTestSecs, sizeof(fTestSecs));
++	fTest = IOTimerEventSource::timerEventSource(this, &SweetHIDButtons::testFired);
++	if (fTest && _hidWorkLoop->addEventSource(fTest) == kIOReturnSuccess) {
++		fTest->setTimeoutMS(fTestSecs ? fTestSecs * 1000 : 2000);
+ 	}
+ 	gSweetButtons = this;
+ 	registerService();
+ 	IOLog("SWEET HID: buttons registered (test every %u s)\n", fTestSecs);
++	if (!gSweetApolloDone) {
++		gSweetApolloDone = true;
++		IOLog("SWEET PROBE: apollo input init begin\n");
++		apollo_keys_init();
++		apollo_touch_init();
++		IOLog("SWEET PROBE: apollo input init done\n");
++	}
+ 	return true;
+ }
+ 
+@@ -414,13 +436,19 @@ SweetHIDButtons::testFired(OSObject *owner, IOTimerEventSource *sender)
+ {
+ 	SweetHIDButtons *self = (SweetHIDButtons *)owner;
+ 
++	IOLog("SWEET HB %u\n", ++self->fTestCount);
++	if (self->fTestSecs == 0) {
++		sender->setTimeoutMS(2000);
++		return;
++	}
++
+ 	/*
+ 	 * Home (Menu) press, then the release 100 ms later; Setup's "Hello"
+ 	 * screen waits for it. Even counts press, odd counts release.
+ 	 */
+ 	bool press = (self->fTestCount & 1) == 0;
+ 	self->key(kHIDUsage_Csmr_Menu, press);
+-	if (++self->fTestCount < 60) {
++	if (self->fTestCount < 60) {
+ 		sender->setTimeoutMS(press ? 100 : self->fTestSecs * 1000);
+ 	}
+ }
