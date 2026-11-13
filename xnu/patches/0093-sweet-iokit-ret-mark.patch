@@ -1,0 +1,19 @@
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index bec97fb..6c631fa 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -687,6 +687,14 @@ kernel_bootstrap_thread(void)
+ #ifdef  IOKIT
+ 	kernel_bootstrap_log("PE_init_iokit");
+ 	PE_init_iokit();
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	{
++		/* bsd/kern/bsd_init.c: paints the boot framebuffer directly, so it
++		 * proves readBooterExtensions (called from PE_init_iokit) returned. */
++		extern void sweet_fb_mark(const char * tag);
++		sweet_fb_mark("IOKIT RET");
++	}
++#endif
+ #endif
+ 
+ 	assert(ml_get_interrupts_enabled() == FALSE);

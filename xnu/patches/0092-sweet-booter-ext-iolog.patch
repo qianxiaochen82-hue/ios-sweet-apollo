@@ -1,66 +1,173 @@
 diff --git a/libsa/bootstrap.cpp b/libsa/bootstrap.cpp
+index e5a86bc..ecb483a 100644
 --- a/libsa/bootstrap.cpp
 +++ b/libsa/bootstrap.cpp
-@@ -204,6 +204,9 @@ KLDBootstrap::readStartupExtensions(void)
+@@ -78,6 +78,43 @@ static void bootstrapLoadSecurityExtensions(void);
+ extern "C" bool IORamDiskBSDRoot(void);
+ #endif
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++/* Drawn straight into the boot framebuffer by bsd/kern/bsd_init.c.
++ * The kprintf/console path stops reaching the framebuffer, this does not. */
++extern "C" void sweet_fb_mark(const char * tag);
++
++/* "tag name", truncated to one banner line worth of characters */
++static void
++sweet_mark_pair(const char * tag, const char * name)
++{
++	char buf[48];
++	char * d = buf;
++	unsigned n = 0;
++
++	while (*tag != '\0' && n < 24) {
++		*d++ = *tag++;
++		n++;
++	}
++	if (name != NULL) {
++		*d++ = ' ';
++		n++;
++		while (*name != '\0' && n < 44) {
++			*d++ = *name++;
++			n++;
++		}
++	}
++	*d = '\0';
++	sweet_fb_mark(buf);
++}
++#else
++static inline void sweet_fb_mark(const char * tag) { (void)tag; }
++static inline void sweet_mark_pair(const char * tag, const char * name)
++{
++	(void)tag;
++	(void)name;
++}
++#endif
++
+ #if PRAGMA_MARK
+ #pragma mark Macros
+ #endif
+@@ -212,12 +249,16 @@ KLDBootstrap::readStartupExtensions(void)
+ 	 * has handed us.
+ 	 */
  	prelinkInfoSect = getsectbynamefromheader(mh, kPrelinkInfoSegment, kPrelinkInfoSection);
-+	IOLog("SWEET BSD: prelink info size=%u\n", (unsigned)prelinkInfoSect->size);
++	sweet_fb_mark(prelinkInfoSect->size ? "PRE SIZE SET" : "PRE SIZE 0");
  	if (prelinkInfoSect->size) {
  		readPrelinkedExtensions(mh, KCKindPrimary);
  	} else {
-+		IOLog("SWEET BSD: calling readBooterExtensions\n");
++		sweet_fb_mark("RBE CALL");
  		readBooterExtensions();
-+		IOLog("SWEET BSD: readBooterExtensions returned\n");
++		sweet_fb_mark("RBE RET");
  	}
-@@ -387,6 +390,11 @@ KLDBootstrap::readBooterExtensions(void)
- 	OSKextLog(/* kext */ NULL,
- 	    kOSKextLogProgressLevel |
+ 	sweet_kld_mark("startup extensions read");
++	sweet_fb_mark("RSE DONE");
+ 
+ 	kernel_mach_header_t *akc_mh;
+ 	akc_mh = (kernel_mach_header_t*)PE_get_kc_header(KCKindAuxiliary);
+@@ -227,12 +268,16 @@ KLDBootstrap::readStartupExtensions(void)
+ 
+ 	loadKernelComponentKexts();
+ 	sweet_kld_mark("component kexts done");
++	sweet_fb_mark("COMP KEXTS");
+ 	loadKernelExternalComponents();
+ 	sweet_kld_mark("external components done");
++	sweet_fb_mark("EXT COMPONENTS");
+ 	readBuiltinPersonalities();
+ 	sweet_kld_mark("builtin personalities done");
++	sweet_fb_mark("BUILTIN PERS");
+ 	OSKext::sendAllKextPersonalitiesToCatalog(true);
+ 	sweet_kld_mark("personalities sent");
++	sweet_fb_mark("PERS SENT");
+ 
+ 	return;
+ }
+@@ -404,7 +449,9 @@ KLDBootstrap::readBooterExtensions(void)
  	    kOSKextLogDirectoryScanFlag | kOSKextLogKextBookkeepingFlag,
  	    "Reading startup extensions from booter memory.");
  
-+#ifdef CONFIG_EMBEDDED
-+	IOLog("SWEET BSD: booter ext enter, embedded=1\n");
-+#else
-+	IOLog("SWEET BSD: booter ext enter, embedded=0\n");
-+#endif
++	sweet_fb_mark("RBE ENTER");
  	booterMemoryMap = IORegistryEntry::fromPath( "/chosen/memory-map", gIODTPlane);
-@@ -394,16 +402,17 @@ KLDBootstrap::readBooterExtensions(void)
++	sweet_fb_mark(booterMemoryMap ? "MMAP OK" : "MMAP NULL");
+ 
  	if (!booterMemoryMap) {
  		OSKextLog(/* kext */ NULL,
- 		    kOSKextLogErrorLevel |
- 		    kOSKextLogGeneralFlag | kOSKextLogDirectoryScanFlag,
- 		    "Can't read booter memory map.");
- 		goto finish;
+@@ -415,6 +462,7 @@ KLDBootstrap::readBooterExtensions(void)
  	}
  
-+	IOLog("SWEET BSD: memory-map node found\n");
  	propertyDict = booterMemoryMap->dictionaryWithProperties();
++	sweet_fb_mark(propertyDict ? "DICT OK" : "DICT NULL");
  	if (!propertyDict) {
  		OSKextLog(/* kext */ NULL,
  		    kOSKextLogErrorLevel |
- 		    kOSKextLogDirectoryScanFlag,
- 		    "Can't get property dictionary from memory map.");
- 		goto finish;
+@@ -424,6 +472,7 @@ KLDBootstrap::readBooterExtensions(void)
  	}
-@@ -420,7 +429,8 @@ KLDBootstrap::readBooterExtensions(void)
+ 
+ 	keyIterator = OSCollectionIterator::withCollection(propertyDict.get());
++	sweet_fb_mark(keyIterator ? "ITER OK" : "ITER NULL");
+ 	if (!keyIterator) {
+ 		OSKextLog(/* kext */ NULL,
+ 		    kOSKextLogErrorLevel |
+@@ -434,15 +483,19 @@ KLDBootstrap::readBooterExtensions(void)
+ 
  	/* Create dictionary of excluded kexts
  	 */
++	sweet_fb_mark("EXCL ENTER");
  #ifndef CONFIG_EMBEDDED
  	OSKext::createExcludeListFromBooterData(propertyDict.get(), keyIterator.get());
  #endif
-+	IOLog("SWEET BSD: exclude list done\n");
++	sweet_fb_mark("EXCL DONE");
  	// !! reset the iterator, not the pointer
  	keyIterator->reset();
-@@ -428,6 +438,7 @@ KLDBootstrap::readBooterExtensions(void)
++	sweet_fb_mark("ITER RESET");
+ 
  	while ((deviceTreeName =
  	    OSDynamicCast(OSString, keyIterator->getNextObject()))) {
  		const char * devTreeNameCString = deviceTreeName->getCStringNoCopy();
-+		IOLog("SWEET BSD: key %s\n", devTreeNameCString);
++		sweet_mark_pair("KEY", devTreeNameCString);
  		OSData * deviceTreeEntry = OSDynamicCast(OSData,
  		    propertyDict->getObject(deviceTreeName));
  
-@@ -496,4 +507,5 @@ KLDBootstrap::readBooterExtensions(void)
+@@ -457,9 +510,11 @@ KLDBootstrap::readBooterExtensions(void)
+ 		    CONST_STRLEN(BOOTER_KEXT_PREFIX))) {
+ 			continue;
+ 		}
++		sweet_mark_pair("KEXT", devTreeNameCString);
+ 
+ 		deviceTreeBuffer = (const _DeviceTreeBuffer *)
+ 		    deviceTreeEntry->getBytesNoCopy(0, sizeof(deviceTreeBuffer));
++		sweet_fb_mark(deviceTreeBuffer ? "PTR OK" : "PTR NULL");
+ 		if (!deviceTreeBuffer) {
+ 			/* We can't get to the data, so we can't do anything,
+ 			 * not even free it from physical memory (if it's there).
+@@ -473,6 +528,7 @@ KLDBootstrap::readBooterExtensions(void)
+ 		}
+ 
+ 		booterDataPtr = (char *)ml_static_ptovirt(deviceTreeBuffer->paddr);
++		sweet_fb_mark(booterDataPtr ? "PVIRT OK" : "PVIRT NULL");
+ 		if (!booterDataPtr) {
+ 			OSKextLog(/* kext */ NULL,
+ 			    kOSKextLogErrorLevel |
+@@ -489,6 +545,7 @@ KLDBootstrap::readBooterExtensions(void)
+ 		 */
+ 		booterData = OSData::withBytesNoCopy(booterDataPtr,
+ 		    deviceTreeBuffer->length);
++		sweet_fb_mark(booterData ? "OSDATA OK" : "OSDATA NULL");
+ 		if (!booterData) {
+ 			OSKextLog(/* kext */ NULL,
+ 			    kOSKextLogErrorLevel |
+@@ -503,13 +560,16 @@ KLDBootstrap::readBooterExtensions(void)
+ 		 * kext system keeps them around until explicitly removed.
+ 		 * Any creation/registration failures are already logged for us.
+ 		 */
++		sweet_fb_mark("KEXT PARSE");
+ 		OSSharedPtr<OSKext> newKext = OSKext::withBooterData(deviceTreeName, booterData.get());
++		sweet_fb_mark(newKext ? "KEXT DONE" : "KEXT FAIL");
+ 
+ 		booterMemoryMap->removeProperty(deviceTreeName);
+ 	} /* while ( (deviceTreeName = OSDynamicCast(OSString, ...) ) ) */
+ 
  finish:
  	sweet_kld_mark("booter extensions done");
-+	IOLog("SWEET BSD: booter ext finish\n");
++	sweet_fb_mark("RBE FINISH");
  	return;
  }
+ 

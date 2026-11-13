@@ -1,8 +1,8 @@
 diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
-index cdd5aad..e9c0969 100644
+index cdd5aad..28a8f1b 100644
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -473,6 +473,263 @@ bsd_rooted_ramdisk(void)
+@@ -473,6 +473,301 @@ bsd_rooted_ramdisk(void)
   * of the tro_ucred field so that the uthread structure can be
   * used like any other.
   */
@@ -11,12 +11,13 @@ index cdd5aad..e9c0969 100644
 + * framebuffer somewhere around bsd_init entry, while the framebuffer itself
 + * is still scanning out (the boot logo stays and our pixels appear). So we
 + * draw the progress ourselves, straight into the framebuffer:
-+ *   row 0: one block per completed stage (stage 1..8)
++ *   row 0: eight full-width segments, one per completed stage (12.5% each)
 + *   row 1: one block per setconf/vfs_mountroot attempt
 + *   row 2: sixteen white blocks before vfs_mountroot, one red block at
 + *          err & 15 when it fails
 + *   row 3: eight bits of the heartbeat tick, so liveness is readable
 + *          without any text at all
++ *   row 4: one block per sweet_fb_mark(), i.e. the kext bootstrap path
 + * plus a text banner at y=1600 drawn with the kernel's own 8x16 console
 + * font (iso_font), which needs neither kprintf nor the video console. */
 +#include <kern/thread.h>
@@ -30,14 +31,18 @@ index cdd5aad..e9c0969 100644
 +#define SWEET_STAMP_H      2400u
 +#define SWEET_STAMP_STRIDE (4320u / 4)
 +#define SWEET_TEXT_Y       1600u
-+#define SWEET_TEXT_LINE_H  40u
-+#define SWEET_TEXT_SCALE   2u   /* 8x16 glyphs become 16x32 cells */
++#define SWEET_TEXT_LINE_H  56u
++#define SWEET_TEXT_SCALE   3u   /* 8x16 glyphs become 24x48 cells */
 +#define SWEET_TEXT_SLOTS   8u   /* 7 rolling lines + 1 heartbeat line */
 +
 +static volatile uint32_t *sweet_stamp_base;
 +static unsigned sweet_stamp_stage;
 +static unsigned sweet_mount_tries;
 +static unsigned sweet_text_next;
++static unsigned sweet_mark_count;
++
++/* exported to libsa/bootstrap.cpp and osfmk/kern/startup.c */
++void sweet_fb_mark(const char *tag);
 +
 +static volatile uint32_t *
 +sweet_stamp_fb(void)
@@ -67,7 +72,13 @@ index cdd5aad..e9c0969 100644
 +static void
 +sweet_stamp_block_at(unsigned row, unsigned index, uint32_t color)
 +{
-+	sweet_fill(8 + index * 72, 8 + row * 80, 64, 64, color);
++	if (row == 0) {
++		/* eight segments across the full 1080px width: 12.5% each */
++		sweet_fill(8 + index * 133, 8, 129, 64, color);
++	} else {
++		/* sixteen slots per auxiliary row */
++		sweet_fill(8 + (index & 15u) * 66, 8 + row * 80, 60, 64, color);
++	}
 +	__asm__ volatile("dsb sy" ::: "memory");
 +}
 +
@@ -90,7 +101,8 @@ index cdd5aad..e9c0969 100644
 +	for (unsigned gy = 0; gy < 16; gy++) {
 +		unsigned bits = iso_font[idx + gy];
 +		for (unsigned gx = 0; gx < 8; gx++) {
-+			uint32_t color = (bits & (0x80u >> gx)) ?
++			/* iso_font is drawn LSB-left by osfmk/console/video_console.c */
++			uint32_t color = (bits & (1u << gx)) ?
 +			    0xffffffffu : 0xff000000u;
 +			for (unsigned sy = 0; sy < SWEET_TEXT_SCALE; sy++) {
 +				unsigned y = y0 + gy * SWEET_TEXT_SCALE + sy;
@@ -189,7 +201,7 @@ index cdd5aad..e9c0969 100644
 +	char *p = buf;
 +
 +	sweet_stamp_stage = stage;
-+	for (unsigned i = 1; i <= stage; i++) {
++	for (unsigned i = 0; i < stage && i < 8; i++) {
 +		sweet_stamp_block(i, 0xff00c800u);
 +	}
 +	p = sweet_stpcpy(p, "STAGE ");
@@ -206,7 +218,7 @@ index cdd5aad..e9c0969 100644
 +	char *p = buf;
 +
 +	++sweet_mount_tries;
-+	sweet_stamp_block_at(1, sweet_mount_tries, 0xffff8000u);
++	sweet_stamp_block_at(1, sweet_mount_tries - 1, 0xffff8000u);
 +	p = sweet_stpcpy(p, "MOUNT TRY ");
 +	p = sweet_stpdec(p, sweet_mount_tries);
 +	*p = '\0';
@@ -223,6 +235,32 @@ index cdd5aad..e9c0969 100644
 +	p = sweet_stphex(p, (unsigned)err);
 +	*p = '\0';
 +	sweet_log(buf);
++}
++
++/* Called from libsa/bootstrap.cpp and osfmk/kern/startup.c. Every call paints
++ * one block on row 4 and appends "#n tag" to the rolling banner, so the kext
++ * bootstrap path stays visible even though the kprintf path is dead. */
++void
++sweet_fb_mark(const char *tag)
++{
++	char buf[64];
++	char *p = buf;
++	const char *s = tag;
++
++	if (s == NULL) {
++		s = "?";
++	}
++	++sweet_mark_count;
++	sweet_stamp_block_at(4, sweet_mark_count - 1, 0xff00ffffu);
++	p = sweet_stpcpy(p, "#");
++	p = sweet_stpdec(p, sweet_mark_count);
++	*p++ = ' ';
++	while (*s != '\0' && p < buf + sizeof(buf) - 1) {
++		*p++ = *s++;
++	}
++	*p = '\0';
++	sweet_log(buf);
++	printf("SWEET MARK %u %s\n", sweet_mark_count, tag);
 +}
 +
 +static void
@@ -266,7 +304,7 @@ index cdd5aad..e9c0969 100644
  void
  bsd_init(void)
  {
-@@ -491,6 +748,9 @@ bsd_init(void)
+@@ -491,6 +786,9 @@ bsd_init(void)
  #endif
  
  	printf("SWEET PROBE: bsd_init enter\n");
@@ -276,7 +314,7 @@ index cdd5aad..e9c0969 100644
  
  	/*
  	 * VM and pmap are up here, so the apollo keys/touch bring-up can run.
-@@ -505,6 +765,7 @@ bsd_init(void)
+@@ -505,6 +803,7 @@ bsd_init(void)
  		apollo_touch_init();
  		printf("SWEET PROBE: apollo input init done\n");
  	}
@@ -284,7 +322,7 @@ index cdd5aad..e9c0969 100644
  
  #define DEBUG_BSDINIT 1
  
-@@ -712,6 +973,7 @@ bsd_init(void)
+@@ -712,6 +1011,7 @@ bsd_init(void)
  	extern void sweet_hfs_register(void);
  	sweet_hfs_register();
  #endif
@@ -292,7 +330,7 @@ index cdd5aad..e9c0969 100644
  
  #if CONFIG_PROC_UUID_POLICY
  	/* Initial proc_uuid_policy subsystem */
-@@ -883,15 +1145,22 @@ bsd_init(void)
+@@ -883,15 +1183,22 @@ bsd_init(void)
  		int err;
  
  		bsd_init_kprintf("calling setconf\n");
@@ -315,7 +353,7 @@ index cdd5aad..e9c0969 100644
  		rootdevice[0] = '\0';
  #if CONFIG_NETBOOT
  		if (netboot) {
-@@ -961,6 +1230,8 @@ bsd_init(void)
+@@ -961,6 +1268,8 @@ bsd_init(void)
  	}
  
  
@@ -324,7 +362,7 @@ index cdd5aad..e9c0969 100644
  #if CONFIG_NETBOOT
  	if (netboot) {
  		int err;
-@@ -1055,8 +1326,10 @@ bsd_init(void)
+@@ -1055,8 +1364,10 @@ bsd_init(void)
  
  	bsd_init_kprintf("calling bsd_utaskbootstrap\n");
  	bsd_utaskbootstrap();
@@ -335,7 +373,7 @@ index cdd5aad..e9c0969 100644
  
  	bsd_init_kprintf("calling mountroot_post_hook\n");
  
-@@ -1066,6 +1339,7 @@ bsd_init(void)
+@@ -1066,6 +1377,7 @@ bsd_init(void)
  		mountroot_post_hook();
  	}
  #endif
