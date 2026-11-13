@@ -12,7 +12,8 @@ index ef64824..f6424a3 100644
 + * log system. One block per completed stage; a block at index 13 toggles every
 + * five seconds to show the kernel is still running. */
 +#include <kern/thread.h>
-+#include <machine/machine_routines.h>
++/* declared in <machine/machine_routines.h> only for PEXPERT/MACH_PRIVATE */
++extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 +
 +#define SWEET_STAMP_FB   ((volatile uint32_t *)(uintptr_t)0x9c000000)
 +#define SWEET_STAMP_W    1080u
