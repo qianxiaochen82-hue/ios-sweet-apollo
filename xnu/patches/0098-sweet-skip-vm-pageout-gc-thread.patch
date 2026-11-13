@@ -1,0 +1,44 @@
+diff --git a/osfmk/vm/vm_pageout.c b/osfmk/vm/vm_pageout.c
+index 7344652..7379ab7 100644
+--- a/osfmk/vm/vm_pageout.c
++++ b/osfmk/vm/vm_pageout.c
+@@ -5062,6 +5062,16 @@ __startup_func
+ static void
+ vm_pageout_create_gc_thread(void)
+ {
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	/*
++	 * SWEET: this hook runs in STARTUP_SUB_EARLY_BOOT, before BSD has set up
++	 * the kernel task's uthreads.  kernel_thread_create() does not return in
++	 * that window (it is the last hook we ever see), so bsd_init() is never
++	 * reached.  The GC thread only drains the pageout queues, so skip it for
++	 * bring-up; vm_pageout() already copes with a null gc thread.
++	 */
++	vm_pageout_gc_thread = THREAD_NULL;
++#else
+ 	thread_t thread;
+ 
+ 	if (kernel_thread_create(vm_pageout_garbage_collect,
+@@ -5076,6 +5086,7 @@ vm_pageout_create_gc_thread(void)
+ 
+ 	/* thread is started in vm_pageout() */
+ 	vm_pageout_gc_thread = thread;
++#endif
+ }
+ STARTUP(EARLY_BOOT, STARTUP_RANK_MIDDLE, vm_pageout_create_gc_thread);
+ 
+@@ -5271,9 +5282,11 @@ vm_pageout(void)
+ 	}
+ 	thread_set_thread_name(ethr->pgo_iothread, "VM_pageout_external_iothread");
+ 
+-	thread_mtx_lock(vm_pageout_gc_thread );
+-	thread_start(vm_pageout_gc_thread );
+-	thread_mtx_unlock(vm_pageout_gc_thread);
++	if (vm_pageout_gc_thread != THREAD_NULL) {
++		thread_mtx_lock(vm_pageout_gc_thread );
++		thread_start(vm_pageout_gc_thread );
++		thread_mtx_unlock(vm_pageout_gc_thread);
++	}
+ 
+ #if VM_PRESSURE_EVENTS
+ 	result = kernel_thread_start_priority((thread_continue_t)vm_pressure_thread, NULL,
