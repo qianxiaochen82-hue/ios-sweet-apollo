@@ -1,0 +1,74 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 5e95078..ef64824 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -492,6 +492,20 @@ bsd_init(void)
+ 
+ 	printf("SWEET PROBE: bsd_init enter\n");
+ 
++	/*
++	 * VM and pmap are up here, so the apollo keys/touch bring-up can run.
++	 * Each step prints, so a hang is visible on the console.
++	 */
++	{
++		extern void apollo_keys_init(void);
++		extern void apollo_touch_init(void);
++
++		printf("SWEET PROBE: apollo input init begin\n");
++		apollo_keys_init();
++		apollo_touch_init();
++		printf("SWEET PROBE: apollo input init done\n");
++	}
++
+ #define DEBUG_BSDINIT 1
+ 
+ #if DEBUG_BSDINIT
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+index 56a5de8..95c9bbc 100644
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -31,16 +31,6 @@
+ 
+ extern "C" uint64_t mach_absolute_time(void);
+ 
+-/*
+- * apollo input drivers (bsd/dev/apollo_keys.c, bsd/dev/apollo_touch.c).
+- * They are started here, not from the UFS root path, because this kext's
+- * start() is known to run on kona (its log lines appear on screen) while
+- * sweet_ufs_init() is reached only at rootdev/mountroot time, after the
+- * point where this port currently stops.
+- */
+-extern "C" void apollo_keys_init(void);
+-extern "C" void apollo_touch_init(void);
+-
+ /* One open client: the user client and its event callback. */
+ class IOHIDEventServiceClient : public OSObject {
+ 	OSDeclareDefaultStructors(IOHIDEventServiceClient);
+@@ -387,7 +377,6 @@ OSDefineMetaClassAndStructors(SweetHIDTouch, IOHIDEventService);
+ 
+ static SweetHIDButtons *gSweetButtons;
+ static SweetHIDTouch *gSweetTouch;
+-static bool gSweetApolloDone;
+ 
+ bool
+ SweetHIDButtons::start(IOService *provider)
+@@ -408,13 +397,12 @@ SweetHIDButtons::start(IOService *provider)
+ 	gSweetButtons = this;
+ 	registerService();
+ 	IOLog("SWEET HID: buttons registered (test every %u s)\n", fTestSecs);
+-	if (!gSweetApolloDone) {
+-		gSweetApolloDone = true;
+-		IOLog("SWEET PROBE: apollo input init begin\n");
+-		apollo_keys_init();
+-		apollo_touch_init();
+-		IOLog("SWEET PROBE: apollo input init done\n");
+-	}
++	/*
++	 * The apollo drivers map MMIO and start a kernel thread, which needs
++	 * VM/pmap.  Calling them from here deadlocked the boot inside zone_init
++	 * (193d7b9 run: no SWEET HB at all), so bsd_init() starts them instead.
++	 */
++	IOLog("SWEET PROBE: apollo input init begin (deferred to bsd_init)\n");
+ 	return true;
+ }
+ 
