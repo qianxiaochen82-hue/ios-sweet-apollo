@@ -2,6 +2,8 @@ name: root-hfs
 
 # Minimal HFS+ root image for `rd=md0` (memory-disk root, no partition changes).
 # The phone's userdata is not HFS+, so the root has to come from the payload.
+# /sbin/launchd must exist: bsd_init execs it as PID 1 and panics with ENOENT
+# otherwise (seen on apollo: "Process 1 exec of /sbin/launchd failed, errno 2").
 
 on:
   workflow_dispatch:
@@ -17,18 +19,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Build static init (/sbin/launchd)
+        run: |
+          set -eux
+          # Single position-independent __text section; mkinit.py lays out the
+          # Mach-O (PAGEZERO/TEXT/LINKEDIT + ad-hoc SHA-256 signature) itself.
+          xcrun clang -target arm64-apple-ios16.0 -c tools/sweet-init.S -o sweet-init.o
+          python3 tools/mkinit.py sweet-init.o launchd
+          file launchd
+          ls -l launchd
+
       - name: Create and populate HFS+ volume
         run: |
           set -eux
           # newfs_hfs on macOS only accepts a disk device, so let hdiutil make the
-          # filesystem, fill it, then copy the raw device back out into a bare
-          # (trailer-free) HFS+ image, which is what IOFindBSDRoot hands to md0.
+          # filesystem and fill it through /Volumes.
           rm -f root-tmp.dmg root-hfs.img
-          hdiutil create -size 8m -fs HFS+ -volname sweet -quiet root-tmp.dmg
+          hdiutil create -size 16m -fs HFS+ -volname sweet -quiet root-tmp.dmg
           hdiutil attach -nobrowse root-tmp.dmg
-          ls -la /Volumes/sweet
           mkdir -p /Volumes/sweet/dev /Volumes/sweet/sbin /Volumes/sweet/etc \
                    /Volumes/sweet/tmp /Volumes/sweet/var
+          cp launchd /Volumes/sweet/sbin/launchd
+          chmod 755 /Volumes/sweet/sbin/launchd
           printf 'sweet root image (md0)\n' > /Volumes/sweet/README.txt
           sync
           hdiutil detach /Volumes/sweet
@@ -36,10 +48,16 @@ jobs:
       - name: Extract bare filesystem image
         run: |
           set -eux
+          # The dmg body is a GPT-wrapped volume; dd the Apple_HFS slice only, so
+          # the artifact is a bare HFS+ volume whose header is at offset 1024.
           hdiutil attach -nomount root-tmp.dmg > dev.txt
           DEV=$(awk 'NR==1{print $1}' dev.txt)
           echo "dev=$DEV"
-          sudo dd if="/dev/r${DEV#/dev/}" of=root-hfs.img bs=1m count=8
+          diskutil list "$DEV"
+          PART=$(diskutil list "$DEV" | awk '/Apple_HFS/{print $NF}' | head -1)
+          test -n "$PART"
+          echo "slice=$PART"
+          sudo dd if="/dev/r$PART" of=root-hfs.img bs=1m
           hdiutil detach "$DEV"
           ls -l root-hfs.img
           # HFS+ volume header sits at offset 1024 and must start with 'H+'.
