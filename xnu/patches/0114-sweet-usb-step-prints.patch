@@ -1,0 +1,41 @@
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -967,6 +967,8 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 	dwc_wr(GEVNTSIZ, (1u << 31) | UD_EVT_SIZE);     /* interrupt masked: polled */
+ 	dwc_wr(GEVNTCOUNT, dwc_rd(GEVNTCOUNT) & 0xffff);
+ 	ud.evt_pos = 0;
++	printf("SWEET USB: event ring 0x%llx size 0x%08x count 0x%08x\n",
++	    ud.dma_pa + UD_EVT, dwc_rd(GEVNTSIZ), dwc_rd(GEVNTCOUNT) & 0xffff);
+ 
+ 	/* High speed, address 0 */
+ 	uint32_t dcfg = dwc_rd(DCFG) & ~(7u | (0x7fu << 3));
+@@ -991,13 +993,25 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 	vm_offset_t qs = ml_io_map(QSCRATCH_PA, 0x100);
+ 	if (qs != 0) {
+ 		uint32_t hs = usb_rd(qs, QSCRATCH_HS_PHY_CTRL), ss = usb_rd(qs, QSCRATCH_SS_PHY_CTRL);
++		int ssen = 0;
++		PE_parse_boot_argn("sweetusbss", &ssen, sizeof(ssen));
+ 		printf("SWEET USB: QSCRATCH HS_PHY_CTRL 0x%08x SS_PHY_CTRL 0x%08x GENERAL_CFG 0x%08x\n",
+ 		    hs, ss, usb_rd(qs, 0x08));
+ 		*(volatile uint32_t *)(qs + QSCRATCH_HS_PHY_CTRL) = hs | UTMI_OTG_VBUS_VALID | SW_SESSVLD_SEL;
+-		*(volatile uint32_t *)(qs + QSCRATCH_SS_PHY_CTRL) = ss | LANE0_PWR_PRESENT;
+-		__asm__ volatile ("dsb sy" ::: "memory");
+-		printf("SWEET USB: VBUS override on: HS_PHY_CTRL 0x%08x SS_PHY_CTRL 0x%08x\n",
+-		    usb_rd(qs, QSCRATCH_HS_PHY_CTRL), usb_rd(qs, QSCRATCH_SS_PHY_CTRL));
++		printf("SWEET USB: HS VBUS override written\n");
++		/*
++		 * This core is USB2 only (GSNPSID 0x3331xxxx), so the SuperSpeed
++		 * lane write is opt-in; on the sweetusb=2 run the phone reset
++		 * somewhere between these writes and RUN_STOP.
++		 */
++		if (ssen) {
++			*(volatile uint32_t *)(qs + QSCRATCH_SS_PHY_CTRL) = ss | LANE0_PWR_PRESENT;
++			__asm__ volatile ("dsb sy" ::: "memory");
++			printf("SWEET USB: VBUS override on: HS_PHY_CTRL 0x%08x SS_PHY_CTRL 0x%08x\n",
++			    usb_rd(qs, QSCRATCH_HS_PHY_CTRL), usb_rd(qs, QSCRATCH_SS_PHY_CTRL));
++		} else {
++			printf("SWEET USB: SS PHY write skipped (sweetusbss=0)\n");
++		}
+ 	}
+ 
+ 	printf("SWEET USB: setting RUN_STOP, DCTL 0x%08x DSTS 0x%08x\n",
