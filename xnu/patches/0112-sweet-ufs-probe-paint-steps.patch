@@ -1,0 +1,77 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 638b9b2..daf9f8e 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -120,6 +120,23 @@ static LCK_GRP_DECLARE(sweet_ufs_grp, "sweet_ufs");
+ static LCK_MTX_DECLARE(sweet_ufs_lock, &sweet_ufs_grp);
+ static boolean_t sweet_ufs_probe_only;	/* GPT walk only, no devices */
+ 
++/*
++ * Paint the step on the heartbeat row before touching the controller.  If the
++ * access stalls the CPU the heartbeat stops repainting, so the row keeps
++ * showing the last step that was reached.
++ */
++static void
++sweet_ufs_probe_step(const char *what)
++{
++	extern void sweet_status(const char *);
++
++	if (!sweet_ufs_probe_only) {
++		return;
++	}
++	printf("SWEET UFS: probe step %s\n", what);
++	sweet_status(what);
++}
++
+ static inline uint32_t
+ ufs_rd(uint32_t off)
+ {
+@@ -610,9 +627,11 @@ sweet_ufs_init(void)
+ 	su.cache = (cache == 1);
+ 	su.wait = (wait == 1);
+ 
++	sweet_ufs_probe_step("UFS: ml_io_map");
+ 	printf("SWEET UFS: probe: mapping regs\n");
+ 	su.regs = ml_io_map(reg[0], reg[1]);
+ 	printf("SWEET UFS: probe: regs at 0x%llx\n", (unsigned long long)(uintptr_t)su.regs);
++	sweet_ufs_probe_step("UFS: kmem_alloc_contig");
+ 	printf("SWEET UFS: probe: allocating DMA\n");
+ 	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
+ 	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+@@ -627,6 +646,7 @@ sweet_ufs_init(void)
+ 	su.lun = 0;
+ 	su.secsize = DEV_BSIZE;
+ 
++	sweet_ufs_probe_step("UFS: takeover");
+ 	lck_mtx_lock(&sweet_ufs_lock);
+ 	error = ufs_take_over_host();
+ 	printf("SWEET UFS: probe: takeover %s\n", error ? "failed" : "ok");
+@@ -636,6 +656,7 @@ sweet_ufs_init(void)
+ 		for (int i = 0; i < 3 && (error = ufs_scsi(tur, sizeof(tur), 0, false)); i++) {
+ 		}
+ 	}
++	sweet_ufs_probe_step("UFS: tur/gpt");
+ 	if (!error) {
+ 		error = ufs_find_partition(want);
+ 	}
+@@ -684,6 +705,7 @@ sweet_ufs_probe(void)
+ 
+ 	sweet_ufs_probe_only = true;
+ 	error = sweet_ufs_init();
++	sweet_ufs_probe_step(error ? "UFS: failed" : "UFS: done");
+ 	sweet_ufs_probe_only = false;
+ 	printf("SWEET UFS: read-only probe %s (%d)\n", error ? "failed" : "ok", error);
+ 	return error;
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index ded34a0..45da160 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -718,7 +718,7 @@ sweet_log(const char *msg)
+ }
+ 
+ /* fixed line at the bottom of the banner, refreshed by the heartbeat */
+-static void
++void
+ sweet_status(const char *msg)
+ {
+ 	sweet_text_at(SWEET_TEXT_SLOTS - 1, msg);
