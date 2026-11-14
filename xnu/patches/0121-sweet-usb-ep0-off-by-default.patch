@@ -1,0 +1,20 @@
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -1089,13 +1089,11 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 	printf("SWEET USB: running (DSTS 0x%08x after %d ms), DMA at 0x%llx\n", dwc_rd(DSTS), i, ud.dma_pa);
+ 
+ 	/*
+-	 * Arm EP0 only after the core runs: on the 0115 run the boot stopped
+-	 * right after "arming ep0 setup" with no timeout print from the command
+-	 * poll, so STARTTRANSFER issued with DCTL.RunStop=0 is the prime suspect.
+-	 * The command itself is no longer waited for, and sweetusbxfer=0 keeps
+-	 * the boot completely clear of it.
++	 * Arm EP0 only after the core runs, and off by default: the command is
++	 * what wedged every boot since 0114, and USB is a debug channel, not part
++	 * of getting to PID 1.  sweetusbxfer=1 turns it back on.
+ 	 */
+-	int xfer = 1;
++	int xfer = 0;
+ 
+ 	PE_parse_boot_argn("sweetusbxfer", &xfer, sizeof(xfer));
+ 	if (xfer) {
