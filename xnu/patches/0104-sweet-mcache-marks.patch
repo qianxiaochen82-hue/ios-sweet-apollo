@@ -1,0 +1,53 @@
+diff --git a/bsd/kern/mcache.c b/bsd/kern/mcache.c
+index 6877b7b..20e8ed8 100644
+--- a/bsd/kern/mcache.c
++++ b/bsd/kern/mcache.c
+@@ -181,10 +181,16 @@ mcache_init(void)
+ 	unsigned int i;
+ 	char name[32];
+ 
++	/* SWEET: framebuffer breadcrumbs; the console kprintf channel is not
++	 * reliable this early on this port. */
++	extern void sweet_fb_mark(const char *tag);
++
+ 	VERIFY(mca_trn_max >= 2);
+ 
+ 	ncpu = ml_wait_max_cpus();
++	sweet_fb_mark("MC CPUS");
+ 	(void) mcache_cache_line_size();        /* prime it */
++	sweet_fb_mark("MC LINE");
+ 
+ 	mcache_reap_tcall = thread_call_allocate(mcache_reap_timeout, NULL);
+ 	mcache_update_tcall = thread_call_allocate(mcache_update, NULL);
+@@ -193,11 +199,13 @@ mcache_init(void)
+ 		/* NOTREACHED */
+ 		__builtin_unreachable();
+ 	}
++	sweet_fb_mark("MC TCALL");
+ 
+ 	mcache_zone = zone_create("mcache", MCACHE_ALLOC_SIZE,
+ 	    ZC_PGZ_USE_GUARDS | ZC_DESTRUCTIBLE);
+ 
+ 	LIST_INIT(&mcache_head);
++	sweet_fb_mark("MC ZONE");
+ 
+ 	for (i = 0; i < sizeof(mcache_bkttype) / sizeof(*btp); i++) {
+ 		btp = &mcache_bkttype[i];
+@@ -206,14 +214,17 @@ mcache_init(void)
+ 		btp->bt_cache = mcache_create(name,
+ 		    (btp->bt_bktsize + 1) * sizeof(void *), 0, 0, MCR_SLEEP);
+ 	}
++	sweet_fb_mark("MC BKT");
+ 
+ 	PE_parse_boot_argn("mcache_flags", &mcache_flags, sizeof(mcache_flags));
+ 	mcache_flags &= MCF_FLAGS_MASK;
+ 
+ 	mcache_audit_cache = mcache_create("audit", sizeof(mcache_audit_t),
+ 	    0, 0, MCR_SLEEP);
++	sweet_fb_mark("MC AUDIT");
+ 
+ 	mcache_applyall(mcache_cache_bkt_enable);
++	sweet_fb_mark("MC APPLY");
+ 	mcache_ready = 1;
+ 
+ 	printf("mcache: %d CPU(s), %d bytes CPU cache line size\n",
