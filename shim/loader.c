@@ -167,7 +167,16 @@ static int adt_patch_chosen_u64(uintptr_t adt, uint32_t adt_size,
 					return 0;
 				sz = *(volatile uint32_t *)(q + 32) & 0x7fffffffu;
 				if (name_eq32((volatile char *)q, prop) && sz == 8) {
-					*(volatile uint64_t *)(q + 36) = value;
+					/*
+					 * The value sits at q + 36, i.e. 4- but not
+					 * 8-byte aligned: an 8-byte store there takes
+					 * an alignment fault on apollo (ESR 0x96000061,
+					 * DFSC 0x21), so write it as two words.
+					 */
+					volatile uint32_t *v =
+						(volatile uint32_t *)(q + 36);
+					v[0] = (uint32_t)value;
+					v[1] = (uint32_t)(value >> 32);
 					return 1;
 				}
 				q += 36 + ((sz + 3) & ~3u);
@@ -240,15 +249,14 @@ const char *loader_boot(uintptr_t dtb)
 
 	uint64_t phys_base = p->phys_base;
 	uint64_t mem_size = p->mem_size;
-	uint64_t fdt_base = 0, fdt_size = 0;
-	if (fdt_memory_high(dtb, &fdt_base, &fdt_size)) {
-		phys_base = fdt_base;
-		mem_size = fdt_size;
-		con_hex("MEMFDT", fdt_base);
-		con_hex("MEMSZ", fdt_size);
-	} else {
-		con_str("MEMFDT", "using payload");
-	}
+	/*
+	 * topaz overrides these from ABL's highest /memory bank (>= 4 GiB) so one
+	 * image covers its 4 GiB and 6 GiB SKUs. apollo's DTB offers a 6 GiB bank
+	 * too, but every known-good boot here ran in the payload's own window
+	 * (0xb0000000), so keep that; the highmem path stays available in fdt.c
+	 * until we have a reason to move the kernel.
+	 */
+	con_str("MEMFDT", "using payload");
 
 	uint64_t pa_of_va_base = phys_base - p->virt_base;	/* pa = va + this */
 	con_hex2("PHYS", "base=", (uint32_t)phys_base, "size=", (uint32_t)mem_size);
