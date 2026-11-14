@@ -143,11 +143,12 @@ void exc_handler(uint64_t slot, uint64_t *regs)
 		return;
 	}
 	con_clear(BLUE);
-	switch (slot & 3) {
-	case 0: con_str("PANIC", "SYNC"); break;
-	case 1: con_str("PANIC", "IRQ"); break;
-	case 2: con_str("PANIC", "FIQ"); break;
-	default: con_str("PANIC", "SERROR"); break;
+	/* One packed string, not a switch of literals: clang turns those into a
+	 * table of pointers, i.e. absolute relocations the shim cannot have. */
+	{
+		static const char why[] = "SYNC\0IRQ\0FIQ\0SERROR";
+
+		con_str("PANIC", &why[5 * (slot & 3)]);
 	}
 	con_hex2("SLOT", "n=", slot, "cpu=", rsr("mpidr_el1"));
 	con_str("STAGE", stage);

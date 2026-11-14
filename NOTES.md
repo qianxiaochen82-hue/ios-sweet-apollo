@@ -1,5 +1,32 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Agent handoff / apollo (2026-11-15)
+
+- Writable clone + branch: `D:\文档\Trae-CN\temp_20261114_02\work\ios-sweet-apollo`
+  on `apollo`. The read-only copy `D:\mi_ios\ios-sweet-main\ios-sweet-main` has NO
+  branch: this shell cannot write there.
+- Stock boot: `D:\文档\Trae-CN\temp_20261114_02\apollo-backup\boot-stock.img`
+  (134,217,728 B, SHA-256 `FEEAFA27...A1700A4B`). `D:\mi_ios\apollo-backup`
+  refused writes.
+- **apollo boots header v2** (kernel_addr 0x8000, ramdisk 0x1000000, page 4096),
+  not v4; v4 is a topaz/Xiaomi-ABL workaround. We stay on v2.
+- shim = our apollo files (GICD 0x17a00000, GICR 0x17a60000, UFS 0x1d84000,
+  FB 0x9c000000, no UART) + topaz `fdt.c`/`fdt.h` (highmem) and `loader.c`
+  (embedded payload first, ABL initrd fallback, ADT dram-base/size patch).
+- Build: `shim/build.ps1` (NDK clang 25.1, no Linux needed), `tools/mkbootimg_v2.py`
+  (v2 header, 1660 B), `tools/mkemptyrd.py`. Artifacts in git-ignored `shim/out/`:
+  - `shim-boot.apollo-embed.img` 33,562,624 B: payload at 0x2e000 (4K after `_end`),
+    kernel_size = image_size = 33,552,528, empty ramdisk at 0x2800000.
+  - `shim-boot.apollo-ramdisk.img` 33,558,528 B: classic v2, payload in the ramdisk
+    (A/B control, same layout as the known-good CI images).
+- Payload: `payload/known-good.bin` (33,364,112 B) extracted from
+  `D:\mi_ios\build\stage-known-good.img` (11 segs, phys_base 0xb0000000,
+  mem 0x4cf00000, adt 10,140 B).
+- clang has no libc and will not fold `__builtin_strcmp` or a switch of literals:
+  `shim.c` reads the vector name from one packed string, `ufs.c` has local
+  `name_is()`. `build.ps1` still enforces ABS64 = 0.
+- Nothing has been written to any partition; boot with `fastboot boot` only.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
