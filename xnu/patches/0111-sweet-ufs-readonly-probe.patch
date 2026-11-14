@@ -1,0 +1,111 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index f9e2130..638b9b2 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -118,6 +118,7 @@ static struct {
+ 
+ static LCK_GRP_DECLARE(sweet_ufs_grp, "sweet_ufs");
+ static LCK_MTX_DECLARE(sweet_ufs_lock, &sweet_ufs_grp);
++static boolean_t sweet_ufs_probe_only;	/* GPT walk only, no devices */
+ 
+ static inline uint32_t
+ ufs_rd(uint32_t off)
+@@ -609,7 +610,10 @@ sweet_ufs_init(void)
+ 	su.cache = (cache == 1);
+ 	su.wait = (wait == 1);
+ 
++	printf("SWEET UFS: probe: mapping regs\n");
+ 	su.regs = ml_io_map(reg[0], reg[1]);
++	printf("SWEET UFS: probe: regs at 0x%llx\n", (unsigned long long)(uintptr_t)su.regs);
++	printf("SWEET UFS: probe: allocating DMA\n");
+ 	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
+ 	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+ 		printf("SWEET UFS: no contiguous DMA memory\n");
+@@ -625,6 +629,7 @@ sweet_ufs_init(void)
+ 
+ 	lck_mtx_lock(&sweet_ufs_lock);
+ 	error = ufs_take_over_host();
++	printf("SWEET UFS: probe: takeover %s\n", error ? "failed" : "ok");
+ 	if (!error) {
+ 		static const uint8_t tur[6] = { 0x00 };
+ 		/* The first command after the bootloader may report a unit attention. */
+@@ -639,6 +644,15 @@ sweet_ufs_init(void)
+ 		return error;
+ 	}
+ 
++	/* Only now, with the partition bounds known, can writes be allowed. */
++	su.writable = (rw != 0);
++	su.ready = true;
++	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
++	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
++	    su.writable ? "read-write" : "read-only", su.dma_pa);
++	if (sweet_ufs_probe_only) {
++		return 0;
++	}
+ 	su.bmajor = bdevsw_add(-1, &sweet_ufs_bdevsw);
+ 	if (su.bmajor < 0) {
+ 		return ENXIO;
+@@ -650,12 +664,6 @@ sweet_ufs_init(void)
+ 	su.bdev = makedev(su.bmajor, 0);
+ 	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
+ 	devfs_make_node(makedev(su.cmajor, 0), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, 0640, "rufsroot0");
+-	/* Only now, with the partition bounds known, can writes be allowed. */
+-	su.writable = (rw != 0);
+-	su.ready = true;
+-	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
+-	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
+-	    su.writable ? "read-write" : "read-only", su.dma_pa);
+ 	sweet_log_start();
+ 	sweet_sample_start();
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+@@ -665,6 +673,22 @@ sweet_ufs_init(void)
+ 	return 0;
+ }
+ 
++/*
++ * Read-only UFS probe: the GPT walk and the first bytes only.  Runs off
++ * the boot path so a hung controller cannot keep PID 1 from starting.
++ */
++int
++sweet_ufs_probe(void)
++{
++	int error;
++
++	sweet_ufs_probe_only = true;
++	error = sweet_ufs_init();
++	sweet_ufs_probe_only = false;
++	printf("SWEET UFS: read-only probe %s (%d)\n", error ? "failed" : "ok", error);
++	return error;
++}
++
+ /*
+  * Persistent console log ("sweetlog"). Filming the phone screen is the only
+  * other way to see the console, so every character that reaches the
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index d0beb9a..ded34a0 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -862,6 +862,23 @@ sweet_stage_thread(void *arg, wait_result_t wres)
+ 		sweet_status(buf);
+ 		sweet_progress();
+ 		printf("SWEET HB stage=%u tick=%u\n", sweet_stamp_stage, tick);
++		/*
++		 * Read-only UFS bring-up, off the boot path: bsd_init keeps
++		 * going, so a hang here cannot stop the run before PID 1.
++		 */
++		if (tick == 1) {
++			extern int sweet_ufs_probe(void);
++			int ufs = 0;
++
++			PE_parse_boot_argn("sweetufs", &ufs, sizeof(ufs));
++			if (ufs) {
++				printf("SWEET PROBE: ufs read-only probe begin (heartbeat)\n");
++				sweet_ufs_probe();
++				printf("SWEET PROBE: ufs read-only probe done\n");
++			} else {
++				printf("SWEET PROBE: ufs probe skipped (sweetufs=0)\n");
++			}
++		}
+ 		/*
+ 		 * The DWC3 probe runs during root mount, long before init, so its
+ 		 * SWEET USB: lines have scrolled off by the time anyone can read
