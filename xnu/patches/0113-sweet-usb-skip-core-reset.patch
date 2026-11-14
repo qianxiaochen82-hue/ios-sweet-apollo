@@ -1,0 +1,60 @@
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -936,16 +936,30 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 		ud_if_create();
+ 	}
+ 
+-	/* Device controller soft reset (PHY and global setup stay as ABL left them). */
+-	dwc_wr(DCTL, DCTL_CSFTRST);
++	/*
++	 * Device controller soft reset (PHY and global setup stay as ABL left
++	 * them).  It is opt-in: on the sweetusb=2 run the gadget DMA line was
++	 * the last one printed and bsd_init never came back, so the CSFTRST
++	 * write or the poll behind it wedges this core.  The bootloader left
++	 * the core powered, not halted and with EP0-3 enabled, which is the
++	 * state this path reuses by default.
++	 */
+ 	int i;
+-	for (i = 0; i < 500 && (dwc_rd(DCTL) & DCTL_CSFTRST); i++) {
+-		delay(1000);
+-	}
+-	printf("SWEET USB: soft reset %s after %d ms, GCTL 0x%08x DCFG 0x%08x\n",
+-	    (dwc_rd(DCTL) & DCTL_CSFTRST) ? "STUCK" : "done", i, dwc_rd(GCTL), dwc_rd(DCFG));
+-	if (dwc_rd(DCTL) & DCTL_CSFTRST) {
+-		return;
++	int doreset = 0;
++	PE_parse_boot_argn("sweetusbreset", &doreset, sizeof(doreset));
++	if (doreset) {
++		dwc_wr(DCTL, DCTL_CSFTRST);
++		for (i = 0; i < 500 && (dwc_rd(DCTL) & DCTL_CSFTRST); i++) {
++			delay(1000);
++		}
++		printf("SWEET USB: soft reset %s after %d ms, GCTL 0x%08x DCFG 0x%08x\n",
++		    (dwc_rd(DCTL) & DCTL_CSFTRST) ? "STUCK" : "done", i, dwc_rd(GCTL), dwc_rd(DCFG));
++		if (dwc_rd(DCTL) & DCTL_CSFTRST) {
++			return;
++		}
++	} else {
++		printf("SWEET USB: soft reset skipped, DCTL 0x%08x DSTS 0x%08x\n",
++		    dwc_rd(DCTL), dwc_rd(DSTS));
+ 	}
+ 
+ 	dwc_wr(GEVNTADRLO, (uint32_t)(ud.dma_pa + UD_EVT));
+@@ -970,6 +984,8 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 		return;
+ 	}
+ 	dwc_wr(DALEPENA, 0x3);
++	printf("SWEET USB: ep0 configured, DALEPENA 0x%08x DCFG 0x%08x DCTL 0x%08x\n",
++	    dwc_rd(DALEPENA), dwc_rd(DCFG), dwc_rd(DCTL));
+ 	ud_start_setup();
+ 
+ 	vm_offset_t qs = ml_io_map(QSCRATCH_PA, 0x100);
+@@ -984,6 +1000,8 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 		    usb_rd(qs, QSCRATCH_HS_PHY_CTRL), usb_rd(qs, QSCRATCH_SS_PHY_CTRL));
+ 	}
+ 
++	printf("SWEET USB: setting RUN_STOP, DCTL 0x%08x DSTS 0x%08x\n",
++	    dwc_rd(DCTL), dwc_rd(DSTS));
+ 	dwc_wr(DCTL, dwc_rd(DCTL) | DCTL_RUN_STOP);
+ 	for (i = 0; i < 500 && (dwc_rd(DSTS) & DSTS_DEVCTRLHLT); i++) {
+ 		delay(1000);
