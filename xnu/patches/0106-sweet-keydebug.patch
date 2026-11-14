@@ -1,0 +1,77 @@
+--- a/bsd/dev/apollo_keys.c
++++ b/bsd/dev/apollo_keys.c
+@@ -113,6 +113,58 @@
+ 	return false;
+ }
+ 
++/*
++ * Debug aid (boot-arg sweetkeydebug=1): snapshot every PM8150 GPIO so a key
++ * wired to a pin we did not expect becomes visible.  Only pin status changes
++ * print, so the line stays readable while someone presses buttons.
++ *
++ * The RT status bit0 is the pin level: for the usual active-low key wiring a
++ * 0 in the pressed column means that pin is the one being held down.
++ */
++static int keys_debug;
++static uint8_t keys_dbg_last[13];
++static bool keys_dbg_valid[13];
++static uint8_t keys_dbg_pon;
++static bool keys_dbg_pon_valid;
++
++static void
++keys_dump_gpios(void)
++{
++	static unsigned tick;
++	uint8_t cur[13];
++	bool ok[13];
++	uint8_t pon = 0;
++	bool changed = false;
++
++	if (!keys_debug || (tick++ % 5u) != 0) {
++		return;
++	}
++	for (int p = 1; p <= 12; ++p) {
++		cur[p] = 0;
++		ok[p] = keys_read(keys_gpio_apid,
++		    (uint16_t)(p * KEYS_GPIO_STRIDE + KEYS_GPIO_RT), &cur[p]);
++		if (ok[p] && (!keys_dbg_valid[p] || keys_dbg_last[p] != cur[p])) {
++			keys_dbg_last[p] = cur[p];
++			keys_dbg_valid[p] = true;
++			changed = true;
++		}
++	}
++	(void)keys_read(keys_pon_apid, KEYS_PON_RT, &pon);
++	if (!keys_dbg_pon_valid || keys_dbg_pon != pon) {
++		keys_dbg_pon = pon;
++		keys_dbg_pon_valid = true;
++		changed = true;
++	}
++	if (!changed) {
++		return;
++	}
++	printf("SWEET KEYSDBG: pon=%#x gpio1..12:", pon);
++	for (int p = 1; p <= 12; ++p) {
++		printf(" %02x", ok[p] ? cur[p] : 0xff);
++	}
++	printf("\n");
++}
++
+ static void
+ keys_dump_map(uint32_t count)
+ {
+@@ -164,6 +216,7 @@
+ 				sweet_hid_key(k, state[k]);
+ 			}
+ 		}
++		keys_dump_gpios();
+ 		keys_wait();
+ 	}
+ }
+@@ -181,6 +234,7 @@
+ 	}
+ 	keys_started = true;
+ 	(void)PE_parse_boot_argn("sweetkeys", &enabled, sizeof(enabled));
++	(void)PE_parse_boot_argn("sweetkeydebug", &keys_debug, sizeof(keys_debug));
+ 	if (!enabled) {
+ 		printf("SWEET KEYS(apollo): disabled (sweetkeys=0)\n");
+ 		return;
