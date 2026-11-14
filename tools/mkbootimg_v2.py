@@ -17,10 +17,10 @@ def pad(b, page=PAGE):
     return b + b"\0" * ((-len(b)) % page)
 
 
-def os_version(v):
-    # "17.0.0" -> (17<<25)|(0<<18)|(0<<11)
+def os_version(v, patch):
+    # "17.0.0" + "2035-06" -> (17<<25)|(0<<18)|(0<<11)|(35<<4)|6
     a, b, c = (int(x) for x in v.split("."))
-    return (a << 25) | (b << 18) | (c << 11)
+    return (a << 25) | (b << 18) | (c << 11) | os_patch(patch)
 
 
 def os_patch(s):
@@ -33,7 +33,7 @@ def main():
     ap.add_argument("--kernel", required=True)
     ap.add_argument("--ramdisk", required=True)
     ap.add_argument("--dtb")
-    ap.add_argument("--cmdline", default="console=null")
+    ap.add_argument("--cmdline", default="")
     ap.add_argument("--base", default="0")
     ap.add_argument("--kernel_offset", default="0x8000")
     ap.add_argument("--ramdisk_offset", default="0x1000000")
@@ -61,7 +61,7 @@ def main():
     struct.pack_into("<I", hdr, 32, base + int(a.tags_offset, 0))
     struct.pack_into("<I", hdr, 36, PAGE)                   # page_size
     struct.pack_into("<I", hdr, 40, a.header_version)
-    struct.pack_into("<I", hdr, 44, os_version(a.os_version))
+    struct.pack_into("<I", hdr, 44, os_version(a.os_version, a.os_patch_level))
     hdr[48:64] = b"\0" * 16                                 # name
     cmd = a.cmdline.encode()
     assert len(cmd) < 512
@@ -81,7 +81,7 @@ def main():
     print("dtb      %#x (%d)" % (len(dtb), len(dtb)))
     print("image    %#x (%d)  %.1f MiB" % (len(out), len(out), len(out) / 1048576.0))
     print("header   version=%d os=%#x patch=%#x" % (a.header_version,
-          os_version(a.os_version), os_patch(a.os_patch_level)))
+          os_version(a.os_version, a.os_patch_level), os_patch(a.os_patch_level)))
     assert len(out) <= 128 * 1024 * 1024, "boot image exceeds the 128 MiB cap"
 
 

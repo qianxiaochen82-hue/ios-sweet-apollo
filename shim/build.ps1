@@ -80,6 +80,12 @@ if ($Mode -eq "embed") {
     $fs.Write($bytes, 0, $bytes.Length)
     $fs.Close()
     $total = (Get-Item $img).Length
+    # ABL expects page-aligned sizes; the zeros after the payload are inert.
+    $padded = ($total + 0xfff) -band (-bnot 0xfff)
+    $fs = [IO.File]::Open($img, "Open", "Write")
+    $fs.SetLength($padded)
+    $fs.Close()
+    $total = $padded
     $fs = [IO.File]::Open($img, "Open", "Write")
     $fs.Seek(16, "Begin") | Out-Null
     $fs.Write([BitConverter]::GetBytes([uint64]$total), 0, 8)
@@ -95,17 +101,21 @@ if ($Mode -eq "embed") {
 
     & python tools\mkemptyrd.py (Join-Path $Out "ramdisk.bin")
     Check "mkemptyrd"
-    $rdOffset = "0x2800000"      # clear of shim+payload (~0x2040000)
+    $rdOffset = "0x2800000"      # clear of shim+payload (~0x2020000)
+    $dtbOffset = "0x2400000"     # likewise: 0x1f00000 would land inside the payload
 } else {
     if (-not (Test-Path $Payload)) { throw "payload not found: $Payload" }
     Copy-Item $Payload (Join-Path $Out "ramdisk.bin") -Force
     Write-Host ("shim     {0} bytes, payload in ramdisk" -f $shimSize)
     $rdOffset = "0x1000000"
+    $dtbOffset = "0x1f00000"
 }
 
+# ABL wants the device tree in the boot image (known-good images carry one).
 & python tools\mkbootimg_v2.py --header_version 2 --kernel $img `
     --ramdisk (Join-Path $Out "ramdisk.bin") --ramdisk_offset $rdOffset `
-    --cmdline "console=null" --output (Join-Path $Out "shim-boot.apollo-$Mode.img")
+    --dtb "dtb\boot_unpacked\dtb" --dtb_offset $dtbOffset `
+    --output (Join-Path $Out "shim-boot.apollo-$Mode.img")
 Check "mkbootimg_v2"
 
 $boot = Join-Path $Out "shim-boot.apollo-$Mode.img"
