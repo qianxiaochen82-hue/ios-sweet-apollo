@@ -1,0 +1,95 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index a38b2d2..abdc3de 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -118,6 +118,9 @@ static struct {
+ static LCK_GRP_DECLARE(sweet_ufs_grp, "sweet_ufs");
+ static LCK_MTX_DECLARE(sweet_ufs_lock, &sweet_ufs_grp);
+ 
++/* Set by sweet_ufs_probe(): attach and read the GPT, but start nothing. */
++static bool sweet_ufs_probe_only;
++
+ static inline uint32_t
+ ufs_rd(uint32_t off)
+ {
+@@ -655,6 +658,9 @@ sweet_ufs_init(void)
+ 	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
+ 	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
+ 	    su.writable ? "read-write" : "read-only", su.dma_pa);
++	if (sweet_ufs_probe_only) {
++		return 0;
++	}
+ 	sweet_log_start();
+ 	sweet_sample_start();
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+@@ -663,6 +669,23 @@ sweet_ufs_init(void)
+ 	return 0;
+ }
+ 
++/*
++ * Boot-arg gated read-only probe for rd=md0 boots: the UFS root path never
++ * runs there, so this is the only way to prove the controller can be taken
++ * over and that LUN 0's GPT and partitions are readable. ufsrw is not set,
++ * so su.writable stays false; nothing is ever written.
++ */
++int
++sweet_ufs_probe(void)
++{
++	int error;
++
++	sweet_ufs_probe_only = true;
++	error = sweet_ufs_init();
++	printf("SWEET UFS: read-only probe %s (%d)\n", error ? "failed" : "ok", error);
++	return error;
++}
++
+ /*
+  * Persistent console log ("sweetlog"). Filming the phone screen is the only
+  * other way to see the console, so every character that reaches the
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index fdcbc49..1e27687 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -940,6 +940,7 @@ bsd_init(void)
+ 		extern void apollo_keys_init(void);
+ 		extern void apollo_touch_init(void);
+ 		extern void sweet_usb_probe(void);
++		extern int sweet_ufs_probe(void);
+ 
+ 		printf("SWEET PROBE: apollo input init begin\n");
+ 		apollo_keys_init();
+@@ -950,9 +951,31 @@ bsd_init(void)
+ 		 * place the probe is reached; it must run early, while the
+ 		 * controller's power domain and clocks are still on.
+ 		 */
+-		printf("SWEET PROBE: usb probe begin\n");
+-		sweet_usb_probe();
+-		printf("SWEET PROBE: usb probe done\n");
++		{
++			int usbprobe = 0;
++			int ufsprobe = 0;
++
++			PE_parse_boot_argn("sweetusbprobe", &usbprobe, sizeof(usbprobe));
++			if (usbprobe) {
++				printf("SWEET PROBE: usb probe begin\n");
++				sweet_usb_probe();
++				printf("SWEET PROBE: usb probe done\n");
++			} else {
++				printf("SWEET PROBE: usb probe skipped (sweetusbprobe=0)\n");
++			}
++			/*
++			 * Read-only UFS bring-up: take the controller over, read LUN 0's GPT
++			 * and the named partition, then stop. Never writes.
++			 */
++			PE_parse_boot_argn("sweetufs", &ufsprobe, sizeof(ufsprobe));
++			if (ufsprobe) {
++				printf("SWEET PROBE: ufs read-only probe begin\n");
++				sweet_ufs_probe();
++				printf("SWEET PROBE: ufs read-only probe done\n");
++			} else {
++				printf("SWEET PROBE: ufs probe skipped (sweetufs=0)\n");
++			}
++		}
+ 	}
+ 	sweet_stage(2);
+ 
