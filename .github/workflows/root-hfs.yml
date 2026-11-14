@@ -28,7 +28,8 @@ jobs:
           # volume (no UDIF trailer), which is what IOFindBSDRoot hands to md0.
           rm -f root-hfs.img
           dd if=/dev/zero of=root-hfs.img bs=1m count=8
-          newfs_hfs -v "$VOLUME" root-hfs.img
+          # newfs_hfs prepends /dev/ to relative paths, so hand it an absolute one.
+          newfs_hfs -v "$VOLUME" "$PWD/root-hfs.img"
           hdiutil attach -nomount root-hfs.img > dev.txt
           cat dev.txt
 
