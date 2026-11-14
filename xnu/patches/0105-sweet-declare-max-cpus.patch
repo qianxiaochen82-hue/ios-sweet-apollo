@@ -1,0 +1,27 @@
+diff --git a/bsd/kern/mcache.c b/bsd/kern/mcache.c
+index 20e8ed8..6d3690c 100644
+--- a/bsd/kern/mcache.c
++++ b/bsd/kern/mcache.c
+@@ -184,9 +184,22 @@ mcache_init(void)
+ 	/* SWEET: framebuffer breadcrumbs; the console kprintf channel is not
+ 	 * reliable this early on this port. */
+ 	extern void sweet_fb_mark(const char *tag);
++	extern void ml_set_max_cpus(int num_cpus);
++
++	sweet_fb_mark("MC ENTER");
+ 
+ 	VERIFY(mca_trn_max >= 2);
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	/*
++	 * ml_wait_max_cpus() sleeps on max_cpus_initialized until
++	 * ml_set_max_cpus() sets it, and only the secondary-CPU start path calls
++	 * that.  This shim boots CPU0 alone and never starts the others, so every
++	 * caller (mcache_init, mbinit, sysctl_mib_init, workq_open, ...) blocked
++	 * here forever.  Declare bring-up finished for the CPUs that do exist.
++	 */
++	ml_set_max_cpus(1);
++#endif
+ 	ncpu = ml_wait_max_cpus();
+ 	sweet_fb_mark("MC CPUS");
+ 	(void) mcache_cache_line_size();        /* prime it */
