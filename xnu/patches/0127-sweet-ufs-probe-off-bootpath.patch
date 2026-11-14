@@ -1,0 +1,114 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index abdc3de..217fbbd 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -611,7 +611,10 @@ sweet_ufs_init(void)
+ 	su.cache = (cache == 1);
+ 	su.wait = (wait == 1);
+ 
++	printf("SWEET UFS: node ok, mapping regs\n");
+ 	su.regs = ml_io_map(reg[0], reg[1]);
++	printf("SWEET UFS: regs at 0x%llx\n", (unsigned long long)(uintptr_t)su.regs);
++	printf("SWEET UFS: allocating DMA\n");
+ 	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
+ 	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+ 		printf("SWEET UFS: no contiguous DMA memory\n");
+@@ -625,8 +628,10 @@ sweet_ufs_init(void)
+ 	su.lun = 0;
+ 	su.secsize = DEV_BSIZE;
+ 
++	printf("SWEET UFS: host takeover\n");
+ 	lck_mtx_lock(&sweet_ufs_lock);
+ 	error = ufs_take_over_host();
++	printf("SWEET UFS: takeover %s\n", error ? "failed" : "ok");
+ 	if (!error) {
+ 		static const uint8_t tur[6] = { 0x00 };
+ 		/* The first command after the bootloader may report a unit attention. */
+@@ -641,6 +646,15 @@ sweet_ufs_init(void)
+ 		return error;
+ 	}
+ 
++	/* Only now, with the partition bounds known, can writes be allowed. */
++	su.writable = (rw != 0);
++	su.ready = true;
++	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
++	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
++	    su.writable ? "read-write" : "read-only", su.dma_pa);
++	if (sweet_ufs_probe_only) {
++		return 0;
++	}
+ 	su.bmajor = bdevsw_add(-1, &sweet_ufs_bdevsw);
+ 	if (su.bmajor < 0) {
+ 		return ENXIO;
+@@ -652,15 +666,6 @@ sweet_ufs_init(void)
+ 	su.bdev = makedev(su.bmajor, 0);
+ 	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
+ 	devfs_make_node(makedev(su.cmajor, 0), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, 0640, "rufsroot0");
+-	/* Only now, with the partition bounds known, can writes be allowed. */
+-	su.writable = (rw != 0);
+-	su.ready = true;
+-	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
+-	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
+-	    su.writable ? "read-write" : "read-only", su.dma_pa);
+-	if (sweet_ufs_probe_only) {
+-		return 0;
+-	}
+ 	sweet_log_start();
+ 	sweet_sample_start();
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 1e27687..52c1eb7 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -873,6 +873,24 @@ sweet_stage_thread(void *arg, wait_result_t wres)
+ 	for (;;) {
+ 		IOSleep(5000);
+ 		tick++;
++		if (tick == 1) {
++			extern int sweet_ufs_probe(void);
++			int ufs = 0;
++
++			/*
++			 * Read-only UFS bring-up, off the boot path: the controller is
++			 * taken over and LUN 0's GPT read while bsd_init keeps going,
++			 * so a hang here cannot stop the run at stage 1. Never writes.
++			 */
++			PE_parse_boot_argn("sweetufs", &ufs, sizeof(ufs));
++			if (ufs) {
++				printf("SWEET PROBE: ufs read-only probe begin (heartbeat)\n");
++				sweet_ufs_probe();
++				printf("SWEET PROBE: ufs read-only probe done\n");
++			} else {
++				printf("SWEET PROBE: ufs probe skipped (sweetufs=0)\n");
++			}
++		}
+ 		/* row 3 shows the tick in binary: a quiet, text-free liveness test */
+ 		for (unsigned b = 0; b < 8; b++) {
+ 			sweet_stamp_block_at(3, b,
+@@ -953,7 +971,6 @@ bsd_init(void)
+ 		 */
+ 		{
+ 			int usbprobe = 0;
+-			int ufsprobe = 0;
+ 
+ 			PE_parse_boot_argn("sweetusbprobe", &usbprobe, sizeof(usbprobe));
+ 			if (usbprobe) {
+@@ -963,18 +980,6 @@ bsd_init(void)
+ 			} else {
+ 				printf("SWEET PROBE: usb probe skipped (sweetusbprobe=0)\n");
+ 			}
+-			/*
+-			 * Read-only UFS bring-up: take the controller over, read LUN 0's GPT
+-			 * and the named partition, then stop. Never writes.
+-			 */
+-			PE_parse_boot_argn("sweetufs", &ufsprobe, sizeof(ufsprobe));
+-			if (ufsprobe) {
+-				printf("SWEET PROBE: ufs read-only probe begin\n");
+-				sweet_ufs_probe();
+-				printf("SWEET PROBE: ufs read-only probe done\n");
+-			} else {
+-				printf("SWEET PROBE: ufs probe skipped (sweetufs=0)\n");
+-			}
+ 		}
+ 	}
+ 	sweet_stage(2);
