@@ -1,0 +1,45 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index f5cca05..7b16ea9 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1127,29 +1127,40 @@ bsd_init(void)
+ 	 */
+ 	bsd_init_kprintf("calling bsd_bufferinit\n");
+ 	bsd_bufferinit();
++	printf("SWEET S2: bsd_bufferinit done\n");
+ 
+ 	/*
+ 	 * Initialize the calendar.
+ 	 */
+ 	bsd_init_kprintf("calling IOKitInitializeTime\n");
++	printf("SWEET S2: before IOKitInitializeTime\n");
+ 	IOKitInitializeTime();
++	printf("SWEET S2: IOKitInitializeTime done\n");
+ 
+ 	/* Initialize the file systems. */
+ 	bsd_init_kprintf("calling vfsinit\n");
++	printf("SWEET S2: before vfsinit\n");
+ 	vfsinit();
++	printf("SWEET S2: vfsinit done\n");
+ 
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+ 	/* AMFI's MAC policy is built in on SWEET (bsd/kern/sweet_amfi.c). */
+ 	extern void sweet_amfi_policy_register(void);
++	printf("SWEET S2: before amfi register\n");
+ 	sweet_amfi_policy_register();
++	printf("SWEET S2: amfi register done\n");
+ #endif
+ 
+ #if SWEET_HFS
+ 	/* HFS is built in on SWEET: register it like its kext would, before mounting root. */
+ 	extern void sweet_hfs_register(void);
++	printf("SWEET S2: before hfs register\n");
+ 	sweet_hfs_register();
++	printf("SWEET S2: hfs register done\n");
+ #endif
++	printf("SWEET S2: before sweet_stage(3)\n");
+ 	sweet_stage(3);
++	printf("SWEET S3: stage 3 painted\n");
+ 
+ #if CONFIG_PROC_UUID_POLICY
+ 	/* Initial proc_uuid_policy subsystem */
