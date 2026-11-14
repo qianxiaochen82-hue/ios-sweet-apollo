@@ -1,0 +1,33 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -724,6 +724,30 @@ sweet_status(const char *msg)
+ 	sweet_text_at(SWEET_TEXT_SLOTS - 1, msg);
+ }
+ 
++/*
++ * Two fixed lines below the rolling banner slots, for evidence that has to
++ * survive a hang of the calling thread (bsd/dev/sweet_usb.c uses them to
++ * show how far the ep0 setup got).  They are not part of the rolling ring,
++ * so nothing else overwrites them and they stay readable while the console
++ * scrolls.
++ */
++void
++sweet_note(int line, const char *s)
++{
++	unsigned y = SWEET_TEXT_Y + (SWEET_TEXT_SLOTS + (unsigned)line) * SWEET_TEXT_LINE_H;
++	unsigned x = 8;
++
++	if (y + SWEET_TEXT_LINE_H > SWEET_STAMP_H) {
++		return;
++	}
++	sweet_fill(0, y, SWEET_STAMP_W, SWEET_TEXT_LINE_H, 0xff000000u);
++	for (; *s != '\0' && (x + 8u * SWEET_TEXT_SCALE) <= SWEET_STAMP_W; s++) {
++		sweet_glyph(x, y + 4, (unsigned char)*s);
++		x += 8u * SWEET_TEXT_SCALE;
++	}
++	__asm__ volatile("dsb sy" ::: "memory");
++}
++
+ static void
+ sweet_stage(unsigned stage)
+ {

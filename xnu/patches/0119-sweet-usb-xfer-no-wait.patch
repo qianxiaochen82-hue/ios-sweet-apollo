@@ -1,0 +1,91 @@
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -38,6 +38,8 @@
+ #include <sys/kern_event.h>
+ 
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++/* bsd/kern/bsd_init.c: two fixed banner lines that survive a hung thread */
++extern void sweet_note(int line, const char *s);
+ void sweet_usb_probe(void);
+ static void sweet_usb_gadget_start(vm_offset_t dwc);
+ extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
+@@ -318,6 +320,9 @@ ud_sleep_ms(unsigned ms)
+ 	thread_block(THREAD_CONTINUE_NULL);
+ }
+ 
++/* set when an ep0 STARTTRANSFER was issued but not waited for */
++static int ud_xfer_pending;
++
+ static int
+ ud_epcmd(unsigned ep, uint32_t cmd, uint32_t p0, uint32_t p1, uint32_t p2)
+ {
+@@ -333,7 +338,29 @@ ud_epcmd(unsigned ep, uint32_t cmd, uint32_t p0, uint32_t p1, uint32_t p2)
+ 	}
+ 	dwc_wr(DEPCMD(ep), cmd | DEPCMD_CMDACT);
+ 	if (dbg) {
++		char buf[32];
++		int dep = 0;
++
+ 		printf("SWEET USB: ep0 xfer doorbell\n");
++		/*
++		 * Do not poll DEPCMD: that read is the prime suspect for the wedge
++		 * (the boot stopped right here on 0115 and 0116).  Give the core a
++		 * moment to fetch the TRB, then look at registers that are known to
++		 * read fine and leave the evidence on the banner.
++		 */
++		ud_xfer_pending = 1;
++		sweet_note(0, "USB: xfer doorbell");
++		delay(20000);
++		printf("SWEET USB: ep0 xfer +20ms DSTS 0x%08x GEVNTCOUNT 0x%08x DALEPENA 0x%08x\n",
++		    dwc_rd(DSTS), dwc_rd(GEVNTCOUNT) & 0xffff, dwc_rd(DALEPENA));
++		snprintf(buf, sizeof(buf), "USB: DSTS %x EV %x", dwc_rd(DSTS),
++		    dwc_rd(GEVNTCOUNT) & 0xffff);
++		sweet_note(1, buf);
++		PE_parse_boot_argn("sweetusbdep", &dep, sizeof(dep));
++		if (dep) {
++			printf("SWEET USB: ep0 xfer DEPCMD 0x%08x\n", dwc_rd(DEPCMD(ep)));
++		}
++		return -3;
+ 	}
+ 	for (int i = 0; i < 1000; i++) {
+ 		uint32_t v = dwc_rd(DEPCMD(ep));
+@@ -366,6 +393,8 @@ ud_start_trb(unsigned ep, uint32_t trb, uint32_t buf, uint32_t len, uint32_t ctl
+ 	t[2] = len;
+ 	t[3] = ctl | TRB_HWO | TRB_LST | TRB_ISP_IMI | TRB_IOC;
+ 	if (ctl == TRBCTL_SETUP) {
++		printf("SWEET USB: setup trb 0x%08x 0x%08x 0x%08x 0x%08x\n",
++		    t[0], t[1], t[2], t[3]);
+ 		printf("SWEET USB: setup trb written\n");
+ 	}
+ 	ud_sync(trb, 16);
+@@ -1059,10 +1088,27 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 	 * Arm EP0 only after the core runs: on the 0115 run the boot stopped
+ 	 * right after "arming ep0 setup" with no timeout print from the command
+ 	 * poll, so STARTTRANSFER issued with DCTL.RunStop=0 is the prime suspect.
++	 * The command itself is no longer waited for, and sweetusbxfer=0 keeps
++	 * the boot completely clear of it.
+ 	 */
+-	printf("SWEET USB: arming ep0 setup\n");
+-	ud_start_setup();
+-	printf("SWEET USB: ep0 setup armed\n");
++	int xfer = 1;
++
++	PE_parse_boot_argn("sweetusbxfer", &xfer, sizeof(xfer));
++	if (xfer) {
++		printf("SWEET USB: arming ep0 setup\n");
++		sweet_note(0, "USB: ep0 arming");
++		ud_start_setup();
++		if (ud_xfer_pending) {
++			printf("SWEET USB: ep0 setup issued, not waiting\n");
++			sweet_note(0, "USB: ep0 issued");
++		} else {
++			printf("SWEET USB: ep0 setup armed\n");
++			sweet_note(0, "USB: ep0 armed");
++		}
++	} else {
++		printf("SWEET USB: ep0 setup skipped (sweetusbxfer=0)\n");
++		sweet_note(0, "USB: ep0 skipped");
++	}
+ 	if (kernel_thread_start(ud_thread, NULL, &thread) == KERN_SUCCESS) {
+ 		thread_deallocate(thread);
+ 	}
