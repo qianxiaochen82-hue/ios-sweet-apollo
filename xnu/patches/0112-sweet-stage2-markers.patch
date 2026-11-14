@@ -1,0 +1,39 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 0234607..f5cca05 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -926,6 +926,7 @@ bsd_init(void)
+ 		apollo_touch_init();
+ 		printf("SWEET PROBE: apollo input init done\n");
+ 	}
++	printf("SWEET S2: before sweet_stage(2)\n");
+ 	sweet_stage(2);
+ 
+ #define DEBUG_BSDINIT 1
+@@ -936,18 +937,26 @@ bsd_init(void)
+ #define bsd_init_kprintf(x, ...)
+ #endif
+ 
++	printf("SWEET S2: before throttle_init\n");
+ 	throttle_init();
++	printf("SWEET S2: throttle_init done\n");
+ 
++	printf("SWEET S2: before copyright\n");
+ 	printf(copyright);
++	printf("SWEET S2: copyright done\n");
+ 
+ #if CONFIG_DEV_KMEM
+ 	bsd_init_kprintf("calling dev_kmem_init\n");
++	printf("SWEET S2: before dev_kmem_init\n");
+ 	dev_kmem_init();
++	printf("SWEET S2: dev_kmem_init done\n");
+ #endif
+ 
+ 	/* Initialize kauth subsystem before instancing the first credential */
+ 	bsd_init_kprintf("calling kauth_init\n");
++	printf("SWEET S2: before kauth_init\n");
+ 	kauth_init();
++	printf("SWEET S2: kauth_init done\n");
+ 
+ 	/* kernel_task->proc = kernproc; */
+ 	set_bsdtask_info(kernel_task, (void *)kernproc);
