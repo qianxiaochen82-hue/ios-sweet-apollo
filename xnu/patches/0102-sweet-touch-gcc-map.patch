@@ -1,0 +1,13 @@
+diff --git a/bsd/dev/apollo_touch.c b/bsd/dev/apollo_touch.c
+index 1658195..413db1f 100644
+--- a/bsd/dev/apollo_touch.c
++++ b/bsd/dev/apollo_touch.c
+@@ -560,7 +560,7 @@ apollo_touch_init(void)
+ 		return;
+ 	}
+ 	tsp.tlmm = ml_io_map(TSP_TLMM_PA, 0x100000);
+-	tsp.gcc = ml_io_map(TSP_GCC_PA, 0x20000);
++	tsp.gcc = ml_io_map(TSP_GCC_PA, 0x60000);
+ 	tsp.se = ml_io_map(TSP_SE_PA, 0x4000);
+ 	if (!tsp.tlmm || !tsp.gcc || !tsp.se) {
+ 		printf("SWEET TOUCH(apollo): MMIO mapping failed\n");
