@@ -1,0 +1,61 @@
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -352,12 +352,21 @@ ud_start_trb(unsigned ep, uint32_t trb, uint32_t buf, uint32_t len, uint32_t ctl
+ 	t[1] = (uint32_t)(bpa >> 32);
+ 	t[2] = len;
+ 	t[3] = ctl | TRB_HWO | TRB_LST | TRB_ISP_IMI | TRB_IOC;
++	if (ctl == TRBCTL_SETUP) {
++		printf("SWEET USB: setup trb written\n");
++	}
+ 	ud_sync(trb, 16);
+ 	if (len) {
+ 		ud_sync(buf, len);
+ 	}
++	if (ctl == TRBCTL_SETUP) {
++		printf("SWEET USB: setup trb synced\n");
++	}
+ 	uint64_t tpa = ud.dma_pa + trb;
+-	ud_epcmd(ep, DEPCMD_STARTTRANSFER, (uint32_t)(tpa >> 32), (uint32_t)tpa, 0);
++	int rc = ud_epcmd(ep, DEPCMD_STARTTRANSFER, (uint32_t)(tpa >> 32), (uint32_t)tpa, 0);
++	if (ctl == TRBCTL_SETUP) {
++		printf("SWEET USB: setup starttransfer rc %d\n", rc);
++	}
+ }
+ 
+ static void
+@@ -988,15 +997,11 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 	dwc_wr(DALEPENA, 0x3);
+ 	printf("SWEET USB: ep0 configured, DALEPENA 0x%08x DCFG 0x%08x DCTL 0x%08x\n",
+ 	    dwc_rd(DALEPENA), dwc_rd(DCFG), dwc_rd(DCTL));
+-	printf("SWEET USB: arming ep0 setup\n");
+-	ud_start_setup();
+-	printf("SWEET USB: ep0 setup armed\n");
+-
+ 	/*
+-	 * The QSCRATCH block is opt-in: on the sweetusb=2 run "ep0 configured"
+-	 * was the last USB line, so the wedge is either this map/read of the
+-	 * wrapper window or the setup TRB write just above.  Enumeration needs
+-	 * the VBUS override, but not at the cost of never reaching RUN_STOP.
++	 * The QSCRATCH block is opt-in: it is not on the list of suspects any
++	 * more (0115 skipped it entirely and the core still wedged), but reading
++	 * the wrapper window stays behind a boot argument until the rest of the
++	 * gadget path runs.
+ 	 */
+ 	vm_offset_t qs = 0;
+ 	int qsen = 0;
+@@ -1036,6 +1041,15 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 		delay(1000);
+ 	}
+ 	printf("SWEET USB: running (DSTS 0x%08x after %d ms), DMA at 0x%llx\n", dwc_rd(DSTS), i, ud.dma_pa);
++
++	/*
++	 * Arm EP0 only after the core runs: on the 0115 run the boot stopped
++	 * right after "arming ep0 setup" with no timeout print from the command
++	 * poll, so STARTTRANSFER issued with DCTL.RunStop=0 is the prime suspect.
++	 */
++	printf("SWEET USB: arming ep0 setup\n");
++	ud_start_setup();
++	printf("SWEET USB: ep0 setup armed\n");
+ 	if (kernel_thread_start(ud_thread, NULL, &thread) == KERN_SUCCESS) {
+ 		thread_deallocate(thread);
+ 	}
