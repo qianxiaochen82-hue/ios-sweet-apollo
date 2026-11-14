@@ -1,0 +1,66 @@
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index 86b29c5..e08e9a2 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -216,6 +216,9 @@ SECURITY_READ_ONLY_LATE(startup_subsystem_id_t) startup_phase = STARTUP_SUB_NONE
+ 
+ extern int serverperfmode;
+ 
++/* SWEET: framebuffer mark channel, see sweet_fb_mark() in bsd/kern/bsd_init.c */
++extern void sweet_fb_mark(const char *tag);
++
+ TUNABLE(startup_debug_t, startup_debug, "startup_debug", 0);
+ 
+ static inline void
+@@ -747,6 +750,7 @@ kernel_bootstrap_thread(void)
+ 	 * interrupts or preemption enabled may begin enforcement.
+ 	 */
+ 	kernel_startup_initialize_upto(STARTUP_SUB_EARLY_BOOT);
++	sweet_fb_mark("EARLY RET");
+ 
+ #if SCHED_HYGIENE_DEBUG
+ 	// Reset interrupts masked timeout before we enable interrupts
+@@ -798,6 +802,7 @@ kernel_bootstrap_thread(void)
+ #endif
+ 
+ 	kernel_startup_initialize_upto(STARTUP_SUB_LOCKDOWN);
++	sweet_fb_mark("LOCKDOWN");
+ 
+ 	/*
+ 	 * Get rid of segments used to bootstrap kext loading. This removes
+@@ -807,10 +812,12 @@ kernel_bootstrap_thread(void)
+ 	 */
+ 	kernel_bootstrap_log("OSKextRemoveKextBootstrap");
+ 	OSKextRemoveKextBootstrap();
++	sweet_fb_mark("KBOOT FREED");
+ 
+ 	/* No changes to kernel text and rodata beyond this point. */
+ 	kernel_bootstrap_log("machine_lockdown");
+ 	machine_lockdown();
++	sweet_fb_mark("ML LOCKDOWN");
+ 
+ #ifdef CONFIG_XNUPOST
+ 	kern_return_t result = kernel_list_tests();
+@@ -824,12 +831,14 @@ kernel_bootstrap_thread(void)
+ #ifdef  IOKIT
+ 	kernel_bootstrap_log("PE_lockdown_iokit");
+ 	PE_lockdown_iokit();
++	sweet_fb_mark("IOKIT LD");
+ #endif
+ 	/*
+ 	 * max_cpus must be nailed down by the time PE_lockdown_iokit() finishes,
+ 	 * at the latest
+ 	 */
+ 	vm_set_restrictions(machine_info.max_cpus);
++	sweet_fb_mark("MAXCPUS");
+ 
+ 
+ #if KPERF
+@@ -840,6 +849,7 @@ kernel_bootstrap_thread(void)
+ 	 *	Start the user bootstrap.
+ 	 */
+ #ifdef  MACH_BSD
++	sweet_fb_mark("PRE BSD");
+ 	kprintf("SWEET STAGE: calling bsd_init\n");
+ 	bsd_init();
+ #endif
