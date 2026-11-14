@@ -40,7 +40,7 @@ jobs:
           hdiutil create -size 16m -fs HFS+ -volname sweet -quiet root-tmp.dmg
           hdiutil attach -nobrowse root-tmp.dmg
           mkdir -p /Volumes/sweet/dev /Volumes/sweet/sbin /Volumes/sweet/etc \
-                   /Volumes/sweet/tmp /Volumes/sweet/var
+                   /Volumes/sweet/tmp /Volumes/sweet/var/run /Volumes/sweet/var/log
           cp launchd /Volumes/sweet/sbin/launchd
           chmod 755 /Volumes/sweet/sbin/launchd
           printf 'sweet root image (md0)\n' > /Volumes/sweet/README.txt

@@ -223,46 +223,54 @@ write_console:
 	ret
 
 /* print w0 as three decimal digits (errno <= 255, leading zeros fine) */
+/*
+ * Helpers below call write_console, so they must keep x30: an unsaved link
+ * register turns the final ret into a jump to itself (silent hang).
+ */
 print_num:
-	sub	sp, sp, #16
+	stp	x29, x30, [sp, #-32]!
 	mov	w10, #100
 	udiv	w12, w0, w10
 	msub	w13, w12, w10, w0
 	add	w12, w12, #'0'
-	strb	w12, [sp]
+	strb	w12, [sp, #16]
 	mov	w10, #10
 	udiv	w14, w13, w10
 	msub	w15, w14, w10, w13
 	add	w14, w14, #'0'
-	strb	w14, [sp, #1]
+	strb	w14, [sp, #17]
 	add	w15, w15, #'0'
-	strb	w15, [sp, #2]
-	mov	x1, sp
+	strb	w15, [sp, #18]
+	add	x1, sp, #16
 	mov	x2, #3
 	bl	write_console
-	add	sp, sp, #16
+	ldp	x29, x30, [sp], #32
 	ret
 
 /* w0 = errno -> "ERR <nnn>\n" */
 fail_line:
-	mov	x20, x0
+	stp	x29, x30, [sp, #-32]!
+	str	x0, [sp, #16]		/* errno; x20/x21 stay the caller's */
 	adr	x1, err_prefix
 	adr	x2, err_prefix_end
 	sub	x2, x2, x1
 	bl	write_console
-	mov	x0, x20
+	ldr	x0, [sp, #16]
 	bl	print_num
 	adr	x1, nl
 	adr	x2, nl_end
 	sub	x2, x2, x1
 	bl	write_console
+	ldp	x29, x30, [sp], #32
 	ret
 
 ok_line:
+	stp	x29, x30, [sp, #-16]!
 	adr	x1, okmsg
 	adr	x2, okmsg_end
 	sub	x2, x2, x1
 	bl	write_console
+	ldp	x29, x30, [sp], #16
 	ret
 
 hang:
