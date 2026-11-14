@@ -10,10 +10,6 @@ on:
     paths:
       - ".github/workflows/root-hfs.yml"
 
-env:
-  IMAGE_SIZE: 8m
-  VOLUME: sweet
-
 jobs:
   build:
     runs-on: macos-15
@@ -21,36 +17,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create bare HFS+ image
+      - name: Create and populate HFS+ volume
         run: |
           set -eux
-          # newfs_hfs formats a plain regular file: the result is a bare HFS+
-          # volume (no UDIF trailer), which is what IOFindBSDRoot hands to md0.
-          rm -f root-hfs.img
-          dd if=/dev/zero of=root-hfs.img bs=1m count=8
-          # newfs_hfs prepends /dev/ to relative paths, so hand it an absolute one.
-          newfs_hfs -v "$VOLUME" "$PWD/root-hfs.img"
-          hdiutil attach -nomount root-hfs.img > dev.txt
-          cat dev.txt
+          # newfs_hfs on macOS only accepts a disk device, so let hdiutil make the
+          # filesystem, fill it, then copy the raw device back out into a bare
+          # (trailer-free) HFS+ image, which is what IOFindBSDRoot hands to md0.
+          rm -f root-tmp.dmg root-hfs.img
+          hdiutil create -size 8m -fs HFS+ -volname sweet -quiet root-tmp.dmg
+          hdiutil attach -nobrowse root-tmp.dmg
+          ls -la /Volumes/sweet
+          mkdir -p /Volumes/sweet/dev /Volumes/sweet/sbin /Volumes/sweet/etc \
+                   /Volumes/sweet/tmp /Volumes/sweet/var
+          printf 'sweet root image (md0)\n' > /Volumes/sweet/README.txt
+          sync
+          hdiutil detach /Volumes/sweet
 
-      - name: Populate
+      - name: Extract bare filesystem image
         run: |
           set -eux
+          hdiutil attach -nomount root-tmp.dmg > dev.txt
           DEV=$(awk 'NR==1{print $1}' dev.txt)
-          mkdir -p /tmp/mnt
-          mount -t hfs "$DEV" /tmp/mnt
-          mkdir -p /tmp/mnt/dev /tmp/mnt/sbin /tmp/mnt/etc /tmp/mnt/tmp /tmp/mnt/var
-          printf 'sweet root image (md0)\n' > /tmp/mnt/README.txt
-          ls -la /tmp/mnt
-          umount /tmp/mnt
-          hdiutil detach "$DEV" || true
-
-      - name: Verify
-        run: |
-          set -eux
+          echo "dev=$DEV"
+          sudo dd if="/dev/r${DEV#/dev/}" of=root-hfs.img bs=1m count=8
+          hdiutil detach "$DEV"
           ls -l root-hfs.img
           # HFS+ volume header sits at offset 1024 and must start with 'H+'.
-          dd if=root-hfs.img bs=1 skip=1024 count=2 | xxd
+          dd if=root-hfs.img bs=1 skip=1024 count=2 2>/dev/null | xxd
 
       - uses: actions/upload-artifact@v4
         with:
