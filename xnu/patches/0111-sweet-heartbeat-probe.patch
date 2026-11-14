@@ -1,0 +1,20 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index d0beb9a..0234607 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -879,9 +879,14 @@ static void
+ sweet_stage_heartbeat(void)
+ {
+ 	thread_t th = THREAD_NULL;
++	kern_return_t kr;
+ 
+-	if (kernel_thread_start(sweet_stage_thread, NULL, &th) == KERN_SUCCESS) {
++	printf("SWEET PROBE: heartbeat start begin\n");
++	kr = kernel_thread_start(sweet_stage_thread, NULL, &th);
++	printf("SWEET PROBE: heartbeat start returned 0x%x\n", kr);
++	if (kr == KERN_SUCCESS) {
+ 		thread_deallocate(th);
++		printf("SWEET PROBE: heartbeat started\n");
+ 	}
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
