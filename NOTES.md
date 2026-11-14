@@ -15,9 +15,10 @@
   (embedded payload first, ABL initrd fallback, ADT dram-base/size patch).
 - Build: `shim/build.ps1` (NDK clang 25.1, no Linux needed), `tools/mkbootimg_v2.py`
   (v2 header, 1660 B), `tools/mkemptyrd.py`. Artifacts in git-ignored `shim/out/`:
-  - `shim-boot.apollo-embed.img` 33,562,624 B: payload at 0x2e000 (4K after `_end`),
-    kernel_size = image_size = 33,552,528, empty ramdisk at 0x2800000.
-  - `shim-boot.apollo-ramdisk.img` 33,558,528 B: classic v2, payload in the ramdisk
+  - `shim-boot.apollo-embed.img` 35,176,448 B: payload at 0x2e000 (4K after `_end`),
+    kernel_size = image_size = 0x2000000, empty ramdisk 41 B at 0x2800000, ABL DTB
+    (dtb_size 0x189f6c) at 0x2400000. Verified on the device 2026-11-15.
+  - `shim-boot.apollo-ramdisk.img` 35,172,352 B: classic v2, payload in the ramdisk
     (A/B control, same layout as the known-good CI images).
 - Payload: `payload/known-good.bin` (33,364,112 B) extracted from
   `D:\mi_ios\build\stage-known-good.img` (11 segs, phys_base 0xb0000000,
@@ -26,6 +27,15 @@
   `shim.c` reads the vector name from one packed string, `ufs.c` has local
   `name_is()`. `build.ps1` still enforces ABS64 = 0.
 - Nothing has been written to any partition; boot with `fastboot boot` only.
+- **8-core SMP (step 1 of the device plan).** The ADT already carries all eight
+  kona CPUs (`cpu0..cpu7`, `reg = core << 8`, A55 0-3 / A77 4-6 / A77-prime 7,
+  one homogeneous cluster) and the payload's XNU already has patch 0078
+  (`SWEET CPU: requested=%u selected=%u (limit=%u)`, `invalid topology`), so the
+  only gate is the boot arg. `tools/patchpayload.py --set cpus=8` rewrites the
+  payload's 608-byte cmdline in place; the rebuilt embed image differs from the
+  verified cpus=1 image by exactly one byte (0x2f060, '1' -> '8'). Rollback:
+  rebuild with `-Payload payload\known-good.bin`, or boot
+  `shim/out/shim-boot.apollo-embed-cpus1.img`.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
