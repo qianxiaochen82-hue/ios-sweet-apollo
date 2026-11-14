@@ -1,0 +1,21 @@
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index e08e9a2..6584660 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -842,7 +842,16 @@ kernel_bootstrap_thread(void)
+ 
+ 
+ #if KPERF
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	/*
++	 * SWEET bring-up: kperf_init_early() never returns on this port (it is
++	 * the last call between the hook loop and bsd_init, and we hang right
++	 * after the MAXCPUS mark).  Performance counters are not needed to boot.
++	 */
++	sweet_fb_mark("SKIP KPERF");
++#else
+ 	kperf_init_early();
++#endif
+ #endif
+ 
+ 	/*
