@@ -1,0 +1,92 @@
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -72,8 +72,47 @@
+ 	__asm__ volatile ("dmb oshld" ::: "memory");
+ 	return v;
+ }
+ 
++/*
++ * Cached by the single probe that root mount runs, so the heartbeat can
++ * re-print the values without touching the controller again: a second probe
++ * would soft-reset the running gadget and replace its DMA area.
++ */
++struct sweet_usb_dbg {
++	bool valid;
++	bool dwc_ok;
++	uint32_t gdscr;
++	uint32_t clk[sizeof(usb_cbcr) / sizeof(usb_cbcr[0])];
++	uint32_t gsnpsid, gctl, gsts, gusb2phycfg;
++	uint32_t dcfg, dctl, devten, dsts, dalepena;
++};
++
++static struct sweet_usb_dbg usb_dbg;
++
++/*
++ * Heartbeat-safe report: prints the values above and touches no register.
++ * Called every 30 s from bsd_init.c's stage thread.
++ */
++void
++sweet_usb_redump(void)
++{
++	if (!usb_dbg.valid) {
++		printf("SWEET USBHOLD: probe has not run yet\n");
++		return;
++	}
++	printf("SWEET USBHOLD: GDSC 0x%08x mclk 0x%08x cfg 0x%08x\n",
++	    usb_dbg.gdscr, usb_dbg.clk[0], usb_dbg.clk[3]);
++	if (!usb_dbg.dwc_ok) {
++		printf("SWEET USBHOLD: DWC3 not read (power/clocks off)\n");
++		return;
++	}
++	printf("SWEET USBHOLD: GSNPSID 0x%08x DSTS 0x%08x DEVTEN 0x%08x DALEPENA 0x%08x\n",
++	    usb_dbg.gsnpsid, usb_dbg.dsts, usb_dbg.devten, usb_dbg.dalepena);
++	printf("SWEET USBHOLD: DCFG 0x%08x DCTL 0x%08x GCTL 0x%08x\n",
++	    usb_dbg.dcfg, usb_dbg.dctl, usb_dbg.gctl);
++}
++
+ void
+ sweet_usb_probe(void)
+ {
+ 	int enabled = 1;
+@@ -93,8 +132,11 @@
+ 	gdscr = usb_rd(gcc, GCC_USB30_PRIM_GDSCR);
+ 	printf("SWEET USB: GDSC usb30_prim 0x%08x (%s)\n", gdscr, (gdscr & (1u << 31)) ? "on" : "off");
+ 	for (unsigned i = 0; i < sizeof(usb_cbcr) / sizeof(usb_cbcr[0]); i++) {
+ 		cbcr[i] = usb_rd(gcc, usb_cbcr[i].off);
++		usb_dbg.clk[i] = cbcr[i];
+ 		printf("SWEET USB: clk %-12s CBCR 0x%08x (%s)\n", usb_cbcr[i].name, cbcr[i],
+ 		    (cbcr[i] & CBCR_CLK_OFF) ? "off" : "on");
+ 	}
++	usb_dbg.gdscr = gdscr;
++	usb_dbg.valid = true;
+ 	/* DWC3 registers need the GDSC, the master clock and the config-NoC path. */
+@@ -113,4 +155,14 @@
+ 	printf("SWEET USB: DWC3 DCFG 0x%08x DCTL 0x%08x DEVTEN 0x%08x DSTS 0x%08x DALEPENA 0x%08x\n",
+ 	    usb_rd(dwc, 0xc700), usb_rd(dwc, 0xc704), usb_rd(dwc, 0xc708), usb_rd(dwc, 0xc70c),
+ 	    usb_rd(dwc, 0xc720));
++	usb_dbg.gsnpsid = usb_rd(dwc, 0xc120);
++	usb_dbg.gctl = usb_rd(dwc, 0xc110);
++	usb_dbg.gsts = usb_rd(dwc, 0xc118);
++	usb_dbg.gusb2phycfg = usb_rd(dwc, 0xc200);
++	usb_dbg.dcfg = usb_rd(dwc, 0xc700);
++	usb_dbg.dctl = usb_rd(dwc, 0xc704);
++	usb_dbg.devten = usb_rd(dwc, 0xc708);
++	usb_dbg.dsts = usb_rd(dwc, 0xc70c);
++	usb_dbg.dalepena = usb_rd(dwc, 0xc720);
++	usb_dbg.dwc_ok = true;
+ 	printf("SWEET USB: DWC3 GEVNTADR 0x%08x%08x GEVNTSIZ 0x%08x GEVNTCOUNT 0x%08x GHWPARAMS0 0x%08x\n",
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -867,10 +867,9 @@
+ 		 * the screen.  Repeat it once from the heartbeat, 30 s in, where it
+ 		 * stays visible long enough to photograph.
+ 		 */
+ 		if ((tick % 6) == 0) {
+-			extern void sweet_usb_probe(void);
+-			printf("SWEET USBDUMP: begin\n");
+-			sweet_usb_probe();
++			extern void sweet_usb_redump(void);
++			sweet_usb_redump();
+ 		}
+ 	}
+ }
