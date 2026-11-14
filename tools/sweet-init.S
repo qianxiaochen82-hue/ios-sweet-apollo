@@ -61,7 +61,7 @@ _start:
 	add	sp, sp, #16
 
 	adr	x1, hello_tail
-	adr	x2, alive
+	adr	x2, hello_end
 	sub	x2, x2, x1
 	bl	write_console
 
@@ -112,10 +112,8 @@ probe_write:
 	bl	write_console
 
 	adr	x0, path_vartest
-	mov	x1, #O_WRONLY
-	orr	x1, x1, #O_CREAT
-	mov	x2, #0x100			/* 0644, built from encodable immediates */
-	orr	x2, x2, #0xa4
+	mov	x1, #0x201			/* O_WRONLY | O_CREAT */
+	mov	x2, #0x1a4			/* 0644 */
 	mov	x16, #SYS_open
 	svc	#0x80
 	b.cs	write_fail
@@ -150,8 +148,7 @@ probe_mmap:
 	mov	x0, #0
 	mov	x1, #16384
 	mov	x2, #PROT_RW
-	movz	x3, #0x1000			/* MAP_ANON */
-	orr	x3, x3, #0x2			/* MAP_PRIVATE */
+	mov	x3, #0x1002			/* MAP_PRIVATE | MAP_ANON */
 	movn	x4, #0				/* fd = -1 */
 	mov	x5, #0
 	mov	x16, #SYS_mmap
@@ -159,7 +156,7 @@ probe_mmap:
 	b.cs	mmap_fail
 
 	mov	x20, x0
-	movz	x21, #0x5aa5
+	mov	x21, #0x5aa5
 	str	x21, [x20]
 	ldr	x22, [x20]
 	cmp	x21, x22
@@ -287,6 +284,7 @@ hello:
 	.ascii	"\n*** SWEET userspace: init running as PID "
 hello_tail:
 	.ascii	" ***\n"
+hello_end:
 msg_read:
 	.ascii	"probe: read /README.txt = "
 msg_read_end:
