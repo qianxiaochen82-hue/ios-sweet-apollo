@@ -1,0 +1,35 @@
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -988,9 +988,22 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 	dwc_wr(DALEPENA, 0x3);
+ 	printf("SWEET USB: ep0 configured, DALEPENA 0x%08x DCFG 0x%08x DCTL 0x%08x\n",
+ 	    dwc_rd(DALEPENA), dwc_rd(DCFG), dwc_rd(DCTL));
++	printf("SWEET USB: arming ep0 setup\n");
+ 	ud_start_setup();
++	printf("SWEET USB: ep0 setup armed\n");
+ 
+-	vm_offset_t qs = ml_io_map(QSCRATCH_PA, 0x100);
++	/*
++	 * The QSCRATCH block is opt-in: on the sweetusb=2 run "ep0 configured"
++	 * was the last USB line, so the wedge is either this map/read of the
++	 * wrapper window or the setup TRB write just above.  Enumeration needs
++	 * the VBUS override, but not at the cost of never reaching RUN_STOP.
++	 */
++	vm_offset_t qs = 0;
++	int qsen = 0;
++	PE_parse_boot_argn("sweetusbqs", &qsen, sizeof(qsen));
++	if (qsen) {
++		qs = ml_io_map(QSCRATCH_PA, 0x100);
++	}
+ 	if (qs != 0) {
+ 		uint32_t hs = usb_rd(qs, QSCRATCH_HS_PHY_CTRL), ss = usb_rd(qs, QSCRATCH_SS_PHY_CTRL);
+ 		int ssen = 0;
+@@ -1012,6 +1025,8 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 		} else {
+ 			printf("SWEET USB: SS PHY write skipped (sweetusbss=0)\n");
+ 		}
++	} else {
++		printf("SWEET USB: QSCRATCH skipped (sweetusbqs=%d)\n", qsen);
+ 	}
+ 
+ 	printf("SWEET USB: setting RUN_STOP, DCTL 0x%08x DSTS 0x%08x\n",
