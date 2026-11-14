@@ -1,0 +1,71 @@
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -81,6 +81,7 @@ usb_rd(vm_offset_t base, uint32_t off)
+ struct sweet_usb_dbg {
+ 	bool valid;
+ 	bool dwc_ok;
++	uint32_t stage;
+ 	uint32_t gdscr;
+ 	uint32_t clk[sizeof(usb_cbcr) / sizeof(usb_cbcr[0])];
+ 	uint32_t gsnpsid, gctl, gsts, gusb2phycfg;
+@@ -96,8 +97,9 @@ static struct sweet_usb_dbg usb_dbg;
+ void
+ sweet_usb_redump(void)
+ {
++	printf("SWEET USBHOLD: probe stage %u (0=not called 1=enter 2=arg 3=gcc 4=clocks 5=dwc-map 6=dwc-read 7=gadget)\n",
++	    usb_dbg.stage);
+ 	if (!usb_dbg.valid) {
+-		printf("SWEET USBHOLD: probe has not run yet\n");
+ 		return;
+ 	}
+ 	printf("SWEET USBHOLD: GDSC 0x%08x mclk 0x%08x cfg 0x%08x\n",
+@@ -119,16 +121,19 @@ sweet_usb_probe(void)
+ 	uint32_t gdscr, cbcr[sizeof(usb_cbcr) / sizeof(usb_cbcr[0])];
+ 	bool clocks_on = true;
+ 
++	usb_dbg.stage = 1;
+ 	/* sweetusb=0 off, 1 (default) report state only, 2 also start the USB device */
+ 	PE_parse_boot_argn("sweetusb", &enabled, sizeof(enabled));
+ 	if (!enabled) {
+ 		return;
+ 	}
++	usb_dbg.stage = 2;
+ 	vm_offset_t gcc = ml_io_map(GCC_PA, GCC_SIZE);
+ 	if (gcc == 0) {
+ 		printf("SWEET USB: GCC map failed\n");
+ 		return;
+ 	}
++	usb_dbg.stage = 3;
+ 	gdscr = usb_rd(gcc, GCC_USB30_PRIM_GDSCR);
+ 	printf("SWEET USB: GDSC usb30_prim 0x%08x (%s)\n", gdscr, (gdscr & (1u << 31)) ? "on" : "off");
+ 	for (unsigned i = 0; i < sizeof(usb_cbcr) / sizeof(usb_cbcr[0]); i++) {
+@@ -139,6 +144,7 @@ sweet_usb_probe(void)
+ 	}
+ 	usb_dbg.gdscr = gdscr;
+ 	usb_dbg.valid = true;
++	usb_dbg.stage = 4;
+ 	/* DWC3 registers need the GDSC, the master clock and the config-NoC path. */
+ 	clocks_on = (gdscr & (1u << 31)) && !(cbcr[0] & CBCR_CLK_OFF) && !(cbcr[3] & CBCR_CLK_OFF);
+ 	if (!clocks_on) {
+@@ -150,6 +156,7 @@ sweet_usb_probe(void)
+ 		printf("SWEET USB: DWC3 map failed\n");
+ 		return;
+ 	}
++	usb_dbg.stage = 5;
+ 	printf("SWEET USB: DWC3 GSNPSID 0x%08x GCTL 0x%08x GSTS 0x%08x GUSB2PHYCFG 0x%08x\n",
+ 	    usb_rd(dwc, 0xc120), usb_rd(dwc, 0xc110), usb_rd(dwc, 0xc118), usb_rd(dwc, 0xc200));
+ 	printf("SWEET USB: DWC3 DCFG 0x%08x DCTL 0x%08x DEVTEN 0x%08x DSTS 0x%08x DALEPENA 0x%08x\n",
+@@ -165,11 +172,13 @@ sweet_usb_probe(void)
+ 	usb_dbg.dsts = usb_rd(dwc, 0xc70c);
+ 	usb_dbg.dalepena = usb_rd(dwc, 0xc720);
+ 	usb_dbg.dwc_ok = true;
++	usb_dbg.stage = 6;
+ 	printf("SWEET USB: DWC3 GEVNTADR 0x%08x%08x GEVNTSIZ 0x%08x GEVNTCOUNT 0x%08x GHWPARAMS0 0x%08x\n",
+ 	    usb_rd(dwc, 0xc404), usb_rd(dwc, 0xc400), usb_rd(dwc, 0xc408), usb_rd(dwc, 0xc40c),
+ 	    usb_rd(dwc, 0xc140));
+ 	if (enabled >= 2) {
+ 		sweet_usb_gadget_start(dwc);
++		usb_dbg.stage = 7;
+ 	}
+ 	if (cbcr[5] & CBCR_CLK_OFF) {
+ 		printf("SWEET USB: ahb2phy clock off; QUSB2 PHY not read\n");
