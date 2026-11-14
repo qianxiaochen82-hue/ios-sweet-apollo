@@ -1,0 +1,104 @@
+name: ios-userland
+
+# Pull the real iOS userland out of a Restore IPSW so we can look before we
+# download 5 GB by hand. Everything lands in out/ and is uploaded; nothing here
+# touches the root image yet -- first we need the Mach-O cputypes.
+#
+# Why the cputype matters: apollo (SM8250, Cortex-A77) is ARMv8.2 and has no
+# FEAT_PAuth, so only cpusubtype 0 (plain arm64) executes; arm64e slices trap
+# on PACIA/PAUTH. tools/macho-info.py reports this and exits non-zero when a
+# file has no plain arm64 slice.
+#
+# Size wall to keep in mind: fastboot boot takes ~128 MB total, and the dyld
+# shared cache alone is 1-2 GB, so a cache-backed userland cannot ride inside
+# the md0 ramdisk payload. Inspect first, decide after.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ipsw_url:
+        description: Restore IPSW URL (e.g. iPhone10,3 iOS 16.7.x)
+        required: true
+      want_cache:
+        description: also copy dyld_shared_cache (~1-2 GB, slow upload)
+        default: "false"
+
+jobs:
+  pull:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download IPSW
+        env:
+          URL: ${{ inputs.ipsw_url }}
+        run: |
+          set -eux
+          curl -L --retry 3 --retry-delay 5 --fail -o ipsw.zip "$URL"
+          ls -l ipsw.zip
+          unzip -l ipsw.zip | head -40
+
+      - name: Unpack DMGs
+        run: |
+          set -eux
+          mkdir -p fw
+          # iOS root and cryptex images are the top-level *.dmg entries.
+          unzip -q -o ipsw.zip -d fw '*.dmg' || true
+          if ! ls fw/*.dmg >/dev/null 2>&1; then
+            unzip -q -o ipsw.zip -d fw
+          fi
+          find fw -name '*.dmg' -maxdepth 3 -print0 | xargs -0 ls -l
+
+      - name: Attach DMGs
+        run: |
+          set -eux
+          find fw -name '*.dmg' -maxdepth 3 | while read -r d; do
+            echo "== attach $d"
+            hdiutil attach -nobrowse -readonly "$d" \
+              || hdiutil attach -nobrowse -readonly \
+                   -imagekey diskimage-class=CRawDiskImage "$d" || true
+          done
+          mount | grep -i '/Volumes' || true
+          ls -l /Volumes
+
+      - name: Copy launchd, dyld, launchd.plist
+        run: |
+          set -eux
+          mkdir -p out
+          take() { # take <path-suffix> <out-name> [required]
+            f=$(find /Volumes -maxdepth 8 -path "*/$1" -type f 2>/dev/null | head -1)
+            if [ -n "$f" ]; then
+              cp "$f" "out/$2"
+              echo "got $2 <- $f"
+            elif [ "${3:-required}" = required ]; then
+              echo "missing /$1" >&2
+              exit 1
+            fi
+          }
+          take sbin/launchd launchd
+          take usr/lib/dyld dyld
+          take System/Library/xpc/launchd.plist launchd.plist optional
+
+      - name: Copy dyld shared cache
+        if: inputs.want_cache == 'true'
+        run: |
+          set -eux
+          f=$(find /Volumes -name 'dyld_shared_cache_*' -type f -size +100M | head -1)
+          test -n "$f"
+          cp "$f" out/
+          ls -l out
+
+      - name: Report cputype
+        run: |
+          set -eux
+          python3 tools/macho-info.py out/launchd out/dyld | tee cputypes.txt
+          if grep -q 'arm64e' cputypes.txt; then
+            echo "::warning::arm64e slice found - apollo has no PAC, that binary cannot run"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-userland
+          path: out/
+          retention-days: 30
