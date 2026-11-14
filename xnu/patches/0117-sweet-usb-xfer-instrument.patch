@@ -1,0 +1,28 @@
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -321,12 +321,25 @@ ud_sleep_ms(unsigned ms)
+ static int
+ ud_epcmd(unsigned ep, uint32_t cmd, uint32_t p0, uint32_t p1, uint32_t p2)
+ {
++	/* ep0 STARTTRANSFER is the one command that makes the core read a TRB */
++	int dbg = (ep == 0 && (cmd & 0xf) == DEPCMD_STARTTRANSFER);
++
+ 	dwc_wr(DEPCMDPAR0(ep), p0);
+ 	dwc_wr(DEPCMDPAR1(ep), p1);
+ 	dwc_wr(DEPCMDPAR2(ep), p2);
++	if (dbg) {
++		printf("SWEET USB: ep0 xfer params 0x%08x 0x%08x, DCTL 0x%08x\n",
++		    p0, p1, dwc_rd(DCTL));
++	}
+ 	dwc_wr(DEPCMD(ep), cmd | DEPCMD_CMDACT);
++	if (dbg) {
++		printf("SWEET USB: ep0 xfer doorbell\n");
++	}
+ 	for (int i = 0; i < 1000; i++) {
+ 		uint32_t v = dwc_rd(DEPCMD(ep));
++		if (dbg && i == 0) {
++			printf("SWEET USB: ep0 xfer first read 0x%08x\n", v);
++		}
+ 		if (!(v & DEPCMD_CMDACT)) {
+ 			uint32_t status = (v >> 12) & 0xf;
+ 			if (status) {
