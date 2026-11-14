@@ -1,0 +1,49 @@
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -62,7 +62,7 @@ static const struct {
+ 
+ #define DWC3_PA                 0x0a600000
+ #define DWC3_SIZE               0x0000d000
+-#define QUSB2_PA                0x088e2000
++#define QUSB2_PA                0x088e3000
+ #define QUSB2_SIZE              0x00000400
+ 
+ static uint32_t
+@@ -904,7 +904,12 @@ static void
+ sweet_usb_gadget_start(vm_offset_t dwc)
+ {
+ 	thread_t thread;
++	int net = 0;
+ 
++	if (ud.dwc) {
++		printf("SWEET USB: gadget already started\n");
++		return;
++	}
+ 	ud.dwc = dwc;
+ 	if (kmem_alloc_contig(kernel_map, &ud.dma, UD_SIZE, PAGE_MASK, 0, 0,
+ 	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+@@ -913,10 +918,23 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 	}
+ 	ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)ud.dma);
+ 	if (!pn) {
++		printf("SWEET USB: no physical page for DMA\n");
+ 		return;
+ 	}
+ 	ud.dma_pa = ptoa_64(pn);
+-	ud_if_create();
++	printf("SWEET USB: gadget DMA at 0x%llx\n", ud.dma_pa);
++	/*
++	 * ud_if_create() registers an ifnet and faults inside dlil when it runs
++	 * this early in bsd_init ("Kernel data abort" at the dlil_if_acquire
++	 * frame on the sweetusb=2 run), so the ethernet interface is opt-in
++	 * until it can be created after the network stack is up.  Enumeration
++	 * does not need it.
++	 */
++	PE_parse_boot_argn("sweetusbnet", &net, sizeof(net));
++	if (net) {
++		printf("SWEET USB: creating ethernet interface\n");
++		ud_if_create();
++	}
+ 
+ 	/* Device controller soft reset (PHY and global setup stay as ABL left them). */
+ 	dwc_wr(DCTL, DCTL_CSFTRST);
