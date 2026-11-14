@@ -1,0 +1,28 @@
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -123,9 +123,23 @@ sweet_usb_probe(void)
+ 
+ 	/* sweetusb=0 off, 1 (default) report state only, 2 also start the USB device */
+ 	PE_parse_boot_argn("sweetusb", &enabled, sizeof(enabled));
++	/*
++	 * Keep USB off the boot path: touching the controller here is what turned
++	 * the known-good run to stage 8 into a hang at stage 2.  sweetusbprobe=1
++	 * opts back in when USB is the thing being worked on.
++	 */
++	{
++		int probe = 0;
++
++		PE_parse_boot_argn("sweetusbprobe", &probe, sizeof(probe));
++		if (!probe) {
++			printf("SWEET USB: probe skipped (sweetusbprobe=0)\n");
++			return;
++		}
++	}
+ 	/* screen tag, so a photograph can be attributed to one build */
+-	printf("SWEET USB: build 0120\n");
+-	sweet_note(0, "USB build 0120");
++	printf("SWEET USB: build 0124\n");
++	sweet_note(0, "USB build 0124");
+ 	sweet_note(1, "USB: probing");
+ 	if (!enabled) {
+ 		return;
