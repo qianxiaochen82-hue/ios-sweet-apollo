@@ -1,0 +1,32 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -945,9 +945,26 @@ bsd_init(void)
+ 		apollo_keys_init();
+ 		apollo_touch_init();
+ 		printf("SWEET PROBE: apollo input init done\n");
+-		printf("SWEET PROBE: usb probe begin\n");
+-		sweet_usb_probe();
+-		printf("SWEET PROBE: usb probe done\n");
++		/*
++		 * With rd=md0 the UFS root path never runs, so this is the only
++		 * place the probe is reached; it must run early, while the
++		 * controller's power domain and clocks are still on.  Off by
++		 * default: USB is a debug channel and this call is what turned the
++		 * previously clean run to stage 8 into a hang.  sweetusbprobe=1
++		 * brings it back when USB is the thing being worked on.
++		 */
++		{
++			int usbprobe = 0;
++
++			PE_parse_boot_argn("sweetusbprobe", &usbprobe, sizeof(usbprobe));
++			if (usbprobe) {
++				printf("SWEET PROBE: usb probe begin\n");
++				sweet_usb_probe();
++				printf("SWEET PROBE: usb probe done\n");
++			} else {
++				printf("SWEET PROBE: usb probe skipped (sweetusbprobe=0)\n");
++			}
++		}
+ 	}
+ 	sweet_stage(2);
+ 
