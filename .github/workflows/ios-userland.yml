@@ -44,10 +44,10 @@ jobs:
           set -eux
           mkdir -p fw
           # iOS root and cryptex images are the top-level *.dmg entries.
-          unzip -q -o ipsw.zip -d fw '*.dmg' || true
-          if ! ls fw/*.dmg >/dev/null 2>&1; then
-            unzip -q -o ipsw.zip -d fw
-          fi
+          unzip -q -o ipsw.zip -d fw '*.dmg' || ditto -x -k ipsw.zip fw
+          # ~5.7 GB zip + ~6 GB of DMGs is close to the runner's free space.
+          rm -f ipsw.zip
+          df -h /
           find fw -name '*.dmg' -maxdepth 3 -print0 | xargs -0 ls -l
 
       - name: Attach DMGs
