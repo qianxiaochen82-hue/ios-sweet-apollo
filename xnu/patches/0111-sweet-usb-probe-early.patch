@@ -1,0 +1,39 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -495,9 +495,18 @@
+ 	{
+ 		extern void apollo_keys_init(void);
+ 		extern void apollo_touch_init(void);
++		extern void sweet_usb_probe(void);
+ 
+ 		printf("SWEET PROBE: apollo input init begin\n");
+ 		apollo_keys_init();
+ 		apollo_touch_init();
+ 		printf("SWEET PROBE: apollo input init done\n");
++		/*
++		 * With rd=md0 the UFS root path never runs, so this is the only
++		 * place the probe is reached; it must run early, while the
++		 * controller's power domain and clocks are still on.
++		 */
++		printf("SWEET PROBE: usb probe begin\n");
++		sweet_usb_probe();
++		printf("SWEET PROBE: usb probe done\n");
+ 	}
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -52,7 +52,6 @@
+ extern void sweet_keys_init(void);
+ extern void sweet_touch_init(void);
+ extern void apollo_keys_init(void);
+ extern void apollo_touch_init(void);
+-extern void sweet_usb_probe(void);
+ 
+ #define REG_CAP         0x00
+@@ -659,6 +658,5 @@
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+ 	apollo_keys_init();
+ 	apollo_touch_init();
+-	sweet_usb_probe();
+ 	return 0;
+ }
+ 
