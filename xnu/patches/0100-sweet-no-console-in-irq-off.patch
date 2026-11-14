@@ -1,0 +1,29 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 73b68e7..77c5e52 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -490,6 +490,7 @@ bsd_rooted_ramdisk(void)
+ #include <kern/thread.h>
+ /* declared in <machine/machine_routines.h> only for PEXPERT/MACH_PRIVATE */
+ extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
++extern boolean_t ml_get_interrupts_enabled(void);
+ /* osfmk/console/iso_font.c, compiled into video_console.c */
+ extern unsigned char iso_font[256 * 16];
+ 
+@@ -789,7 +790,15 @@ sweet_fb_mark(const char *tag)
+ 	}
+ 	*p = '\0';
+ 	sweet_log(buf);
+-	printf("SWEET MARK %u %s\n", sweet_mark_count, tag);
++	/*
++	 * console_io_allowed() panics once startup_phase >= STARTUP_SUB_EARLY_BOOT
++	 * if interrupts are disabled, which is the case in the window right after
++	 * the hook loop (before kernel_bootstrap_thread re-enables them). The
++	 * banner above is pure framebuffer, so it still gets drawn.
++	 */
++	if (ml_get_interrupts_enabled()) {
++		printf("SWEET MARK %u %s\n", sweet_mark_count, tag);
++	}
+ }
+ 
+ /*
