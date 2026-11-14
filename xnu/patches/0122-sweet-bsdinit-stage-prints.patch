@@ -1,0 +1,11 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -959,7 +959,7 @@ bsd_init(void)
+ #define DEBUG_BSDINIT 1
+ 
+ #if DEBUG_BSDINIT
+-#define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
++#define bsd_init_kprintf(x, ...) (kprintf("bsd_init: " x, ## __VA_ARGS__), printf("SWEET S2: " x, ## __VA_ARGS__))
+ #else
+ #define bsd_init_kprintf(x, ...)
+ #endif
