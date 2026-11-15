@@ -174,6 +174,24 @@ their `.migrated` markers. The 24 MiB -> 11.7 GiB growth is the decmpfs
 decompression of the shared cache (in the container the main cache is 384 KiB
 and `.symbols` 565 MiB; the volume keeps them uncompressed).
 
+**Read-only UFS probe, booted 2026-11-15 (nothing written).** The XNU probe
+(0126/0127) already took the controller over and read the GPT, but its summary
+line carried only the first block and whole MiB, so 0134 adds the GPT header
+geometry, the exact partition bounds and the image fit check. Expected console
+(offline dump, still to be confirmed by the user's photo):
+
+    SWEET GPT: LUN 0 header at 0x1, alt 0x1d807ff, disk 120831 MiB (118 GiB), 128 x 128 entries
+    SWEET GPT: "userdata" LBA 0x2c0000..0x1d807fa, 28051451 blocks = 109575 MiB, 224411608 BSD sectors
+    SWEET GPT: 24 GiB image (6291456 blocks) fits the partition
+    SWEET UFS: "userdata" on LUN 0: first block 0x2c0000, 109575 MiB, read-only, DMA at 0x...
+
+Kernel CI run 43676266847. Image
+`shim/out/shim-boot.apollo-embed-ufsprobe.img`, 35,192,832 B, sha256
+`46AE721439CFE5B7AEB18632D9E3ABF2260713B615CB6721DA5A38E4F9F98B3D`, cmdline
+`debug=0xc serial=3 cpus=8 keepsyms=1 sweetnokdp=1 rd=md0 rootrw=1 sweetusb=2
+sweetufs=1` (no `ufsrw`, so the probe cannot write). `fastboot boot` returned
+OKAY and the device left fastboot at once.
+
 **Linux host actually used: WSL2 distro `apollo`, everything on D:**
 
     wsl --import apollo D:\wsl\apollo ubuntu-base-24.04.3-base-amd64.tar.gz --version 2
