@@ -1,33 +1,37 @@
 diff --git a/bsd/dev/apollo_keys.c b/bsd/dev/apollo_keys.c
 --- a/bsd/dev/apollo_keys.c
 +++ b/bsd/dev/apollo_keys.c
-@@ -95,6 +95,25 @@
- 	return false;
+@@ -147,6 +147,29 @@
+ 	printf("\n");
  }
  
-+/* Read-only: PMIC5 GPIO6 configuration, to find out why the pin never moves. */
++/*
++ * Read-only: dump the PMIC5 GPIO6 configuration.  If the bootloader left the
++ * pin disabled (EN_CTL bit7 clear) the RT status bit never follows the key, so
++ * the level alone cannot tell us whether this is the right pin.
++ */
 +static void
-+keys_dump_gpio6(uint16_t apid)
++keys_dump_gpio6(void)
 +{
-+	static const uint8_t off[] = { 0x04u, 0x05u, 0x40u, 0x41u, 0x42u,
-+	    0x43u, 0x45u, 0x46u, 0x0au, 0x10u };
-+	uint8_t v[10];
-+	bool ok[10];
-+	unsigned i;
++	static const uint8_t off[] = { 0x04u, 0x05u, 0x40u, 0x41u,
++	    0x42u, 0x43u, 0x45u, 0x46u };
++	uint8_t v[8];
++	bool ok[8];
 +
-+	for (i = 0; i < 10; ++i) {
++	for (unsigned i = 0; i < 8; ++i) {
 +		v[i] = 0;
-+		ok[i] = keys_read(apid, (uint16_t)(KEYS_GPIO6 + off[i]), &v[i]);
++		ok[i] = keys_read(keys_gpio_apid,
++		    (uint16_t)(KEYS_GPIO6 + off[i]), &v[i]);
 +	}
-+	printf("SWEET KEYS(apollo): gpio6 type=%#x/%d sub=%#x/%d mode=%#x/%d vin=%#x/%d pull=%#x/%d in=%#x/%d out=%#x/%d en=%#x/%d rt0a=%#x/%d rt10=%#x/%d\n",
-+	    v[0], ok[0], v[1], ok[1], v[2], ok[2], v[3], ok[3], v[4], ok[4],
-+	    v[5], ok[5], v[6], ok[6], v[7], ok[7], v[8], ok[8], v[9], ok[9]);
++	printf("SWEET KEYS(apollo): gpio6 cfg type=%#x/%d sub=%#x/%d mode=%#x/%d vin=%#x/%d pull=%#x/%d in=%#x/%d out=%#x/%d en=%#x/%d\n",
++	    v[0], ok[0], v[1], ok[1], v[2], ok[2], v[3], ok[3],
++	    v[4], ok[4], v[5], ok[5], v[6], ok[6], v[7], ok[7]);
 +}
 +
  static void
  keys_dump_map(uint32_t count)
  {
-@@ -192,9 +211,10 @@
+@@ -246,9 +269,10 @@
  	printf("SWEET KEYS(apollo): arb=%#x apids=%u pon-apid=%u gpio-apid=%u pon=%#x/%d gpio6[0x0a]=%#x/%d gpio6[0x10]=%#x/%d\n",
  	    keys_version, count, keys_pon_apid, keys_gpio_apid,
  	    pon, pok, gpio, gok, gpio_alt, aok);
@@ -35,7 +39,7 @@ diff --git a/bsd/dev/apollo_keys.c b/bsd/dev/apollo_keys.c
 +	if (!pok || keys_gpio_apid == KEYS_NO_APID) {
  		keys_dump_map(count);
  	}
-+	keys_dump_gpio6(keys_gpio_apid);
++	keys_dump_gpio6();
  	kern_return_t kr = kernel_thread_start(keys_thread, NULL, &thread);
  	if (kr == KERN_SUCCESS) {
  		thread_deallocate(thread);
