@@ -2,6 +2,26 @@
 
 ## Agent handoff / apollo (2026-11-15)
 
+- **2026-11-15 late, freeze hunt.** Boots stop a few seconds after 100% (last
+  visible line varies: `fipspost_post:178/182/184/206`); HB2 lines, HB tick
+  blocks and HID key pairs all stop together. User confirmed the tick blocks
+  *were* drawn at 100% and then froze, so the 5 s repaint really stopped.
+  0141 (`xnu/patches/0141-sweet-paint-only-thread.patch`, CI 43704435400)
+  adds `sweet_paint_thread`: 1 Hz, 16 slots on row 7, cyan/red, **no printf**,
+  gated by the existing `sweethb=1`. Image
+  `shim/out/shim-boot.apollo-embed-ufsroot-paint.img`, 35,192,832 B, sha256
+  `45466ABE422F5008837D6EB7261FD3A5D06B28049D324123CAF89E84CDDA12BF`,
+  cmdline identical to hb2. Pushed 18:46 local.
+- **UFS write path is NOT an infinite wait** (`bsd/dev/sweet_ufs.c`):
+  `ufs_scsi()` polls `REG_UTRLDBR` with a 5 s `CMD_TIMEOUT_NS` deadline and
+  `delay(1)`, returns `ETIMEDOUT`; `sweet_ufs_strategy()` holds
+  `sweet_ufs_lock` only across that bounded loop (<= 1 MiB per command).
+  Bug found: the timeout recovery writes `ufs_wr(REG_UTRLCLR, ~1u)` =
+  0xfffffffe, which clears every doorbell bit **except slot 0** - the only
+  slot this driver uses - so after one timeout every later command stalls 5 s
+  and times out too (bounded but fatal). `sweet_log_append()` is a lock-free
+  ring memcpy, so console output cannot deadlock against `sweet_ufs_lock`.
+
 - Writable clone + branch: `D:\文档\Trae-CN\temp_20261114_02\work\ios-sweet-apollo`
   on `apollo`. The read-only copy `D:\mi_ios\ios-sweet-main\ios-sweet-main` has NO
   branch: this shell cannot write there.

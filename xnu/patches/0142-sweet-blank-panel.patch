@@ -1,0 +1,28 @@
+所在位置 行:15 字符: 2069
++ ... | Out-Null; git -C "D:\文档\Trae-CN\temp_20261114_02\work\scratch\p142" ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: in the... Git touches it:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 65fd681..2c2c34d 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1008,6 +1008,17 @@ sweet_hb_start(void)
+ 	if (on == 0) {
+ 		return;
+ 	}
++	/*
++	 * sweetblank=1 stops the text console from drawing on the panel, so the
++	 * painted blocks are the only content and cannot be overwritten by
++	 * kernel output. Panics still draw.
++	 */
++	int blank = 0;
++	PE_parse_boot_argn("sweetblank", &blank, sizeof(blank));
++	if (blank != 0) {
++		extern int sweet_console_muted;   /* osfmk/console/serial_console.c */
++		sweet_console_muted = 1;
++	}
+ 	if (kernel_thread_start(sweet_hb_thread, NULL, &th) == KERN_SUCCESS) {
+ 		thread_deallocate(th);
+ 	}
