@@ -1,0 +1,102 @@
+diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
+index aa5cec6..e6f8984 100644
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -122,6 +122,8 @@ void
+ sweet_usb_probe(void)
+ {
+ 	int enabled = 1;
++	int rdlevel = 1;
++	int nowrite = 0;
+ 	uint32_t gdscr, cbcr[sizeof(usb_cbcr) / sizeof(usb_cbcr[0])];
+ 	bool clocks_on = true;
+ 
+@@ -131,6 +133,20 @@ sweet_usb_probe(void)
+ 	if (!enabled) {
+ 		return;
+ 	}
++	/*
++	 * 0148: the 0147 run reset the phone between 58% and 65%, i.e. right where
++	 * this probe runs, before the gadget thread ever started.  So a *read* of a
++	 * register in a collapsed power domain is the suspect, not a write.
++	 * sweetusbread=1 only touches GCC (always on), 2 adds the DWC3 ID block,
++	 * 3 adds the event ring, 4 adds the QUSB2 PHY.  sweetusbnowrite=1 keeps
++	 * the gadget thread from starting at all.
++	 */
++	PE_parse_boot_argn("sweetusbread", &rdlevel, sizeof(rdlevel));
++	if (rdlevel < 1 || rdlevel > 4) {
++		rdlevel = 1;
++	}
++	PE_parse_boot_argn("sweetusbnowrite", &nowrite, sizeof(nowrite));
++	printf("SWEET USB: probe read level %d, writes %s\n", rdlevel, nowrite ? "off" : "allowed");
+ 	usb_dbg.stage = 2;
+ 	vm_offset_t gcc = ml_io_map(GCC_PA, GCC_SIZE);
+ 	if (gcc == 0) {
+@@ -149,6 +165,10 @@ sweet_usb_probe(void)
+ 	usb_dbg.gdscr = gdscr;
+ 	usb_dbg.valid = true;
+ 	usb_dbg.stage = 4;
++	if (rdlevel < 2) {
++		printf("SWEET USB: probe done at read level 1 (GCC only)\n");
++		return;
++	}
+ 	/* DWC3 registers need the GDSC, the master clock and the config-NoC path. */
+ 	clocks_on = (gdscr & (1u << 31)) && !(cbcr[0] & CBCR_CLK_OFF) && !(cbcr[3] & CBCR_CLK_OFF);
+ 	if (!clocks_on) {
+@@ -161,6 +181,7 @@ sweet_usb_probe(void)
+ 		return;
+ 	}
+ 	usb_dbg.stage = 5;
++	printf("SWEET USB: reading DWC3 id block (GSNPSID first)\n");
+ 	printf("SWEET USB: DWC3 GSNPSID 0x%08x GCTL 0x%08x GSTS 0x%08x GUSB2PHYCFG 0x%08x\n",
+ 	    usb_rd(dwc, 0xc120), usb_rd(dwc, 0xc110), usb_rd(dwc, 0xc118), usb_rd(dwc, 0xc200));
+ 	printf("SWEET USB: DWC3 DCFG 0x%08x DCTL 0x%08x DEVTEN 0x%08x DSTS 0x%08x DALEPENA 0x%08x\n",
+@@ -177,9 +198,12 @@ sweet_usb_probe(void)
+ 	usb_dbg.dalepena = usb_rd(dwc, 0xc720);
+ 	usb_dbg.dwc_ok = true;
+ 	usb_dbg.stage = 6;
+-	printf("SWEET USB: DWC3 GEVNTADR 0x%08x%08x GEVNTSIZ 0x%08x GEVNTCOUNT 0x%08x GHWPARAMS0 0x%08x\n",
+-	    usb_rd(dwc, 0xc404), usb_rd(dwc, 0xc400), usb_rd(dwc, 0xc408), usb_rd(dwc, 0xc40c),
+-	    usb_rd(dwc, 0xc140));
++	if (rdlevel >= 3) {
++		printf("SWEET USB: reading DWC3 event ring block\n");
++		printf("SWEET USB: DWC3 GEVNTADR 0x%08x%08x GEVNTSIZ 0x%08x GEVNTCOUNT 0x%08x GHWPARAMS0 0x%08x\n",
++		    usb_rd(dwc, 0xc404), usb_rd(dwc, 0xc400), usb_rd(dwc, 0xc408), usb_rd(dwc, 0xc40c),
++		    usb_rd(dwc, 0xc140));
++	}
+ 	if (enabled >= 2) {
+ 		/*
+ 		 * 0147: never touch a DWC3 register from this thread.  Every write
+@@ -189,7 +213,9 @@ sweet_usb_probe(void)
+ 		 */
+ 		thread_t th = THREAD_NULL;
+ 
+-		if (kernel_thread_start(sweet_usb_gadget_thread, (void *)dwc, &th) == KERN_SUCCESS) {
++		if (nowrite) {
++			printf("SWEET USB: gadget thread skipped (sweetusbnowrite=1)\n");
++		} else if (kernel_thread_start(sweet_usb_gadget_thread, (void *)dwc, &th) == KERN_SUCCESS) {
+ 			thread_deallocate(th);
+ 			printf("SWEET USB: gadget thread started\n");
+ 		} else {
+@@ -197,6 +223,10 @@ sweet_usb_probe(void)
+ 		}
+ 		usb_dbg.stage = 7;
+ 	}
++	if (rdlevel < 4) {
++		printf("SWEET USB: probe done at read level %d\n", rdlevel);
++		return;
++	}
+ 	if (cbcr[5] & CBCR_CLK_OFF) {
+ 		printf("SWEET USB: ahb2phy clock off; QUSB2 PHY not read\n");
+ 		return;
+@@ -208,8 +238,10 @@ sweet_usb_probe(void)
+ 	/* DT qcom,qusb-phy-reg-offset order (Linux phy-msm-qusb-v2.c): PORT_TUNE1 0x240,
+ 	 * PLL_COMMON_STATUS_ONE 0x1a0, PWR_CTRL1 0x210, INTR_CTRL 0x230,
+ 	 * PLL_CORE_INPUT_OVERRIDE 0x0a8, TEST1 0x254. */
++	printf("SWEET USB: reading QUSB2 PHY block\n");
+ 	printf("SWEET USB: QUSB2 PLL_STATUS 0x%08x PWR_CTRL1 0x%08x PORT_TUNE1 0x%08x TEST1 0x%08x\n",
+ 	    usb_rd(phy, 0x1a0), usb_rd(phy, 0x210), usb_rd(phy, 0x240), usb_rd(phy, 0x254));
++	printf("SWEET USB: probe done at read level %d\n", rdlevel);
+ }
+ 
+ /*
