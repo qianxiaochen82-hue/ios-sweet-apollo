@@ -1,0 +1,69 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index e8b1fd4..91cabef 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -999,6 +999,14 @@ sweet_stamp_breadcrumb(unsigned step)
+  *   row 5 slots 10-12  last return: 10 zero, 11 data, 12 errno (magenta)
+  *   row 6 slots 2-15   one cyan block per 256 calls (still alive)
+  */
++/*
++ * 0150: lock-free copy of process 1's recent calls, so a separate thread can
++ * print them as text.  Written from unix_syscall() with preemption off, read
++ * from a plain kernel thread; no locks on either side.
++ */
++static volatile unsigned sweet_sc_ring[8];
++static volatile unsigned sweet_sc_total;
++
+ void
+ sweet_syscall_note(unsigned code)
+ {
+@@ -1006,6 +1014,8 @@ sweet_syscall_note(unsigned code)
+ 	static unsigned count;
+ 	unsigned i, bits;
+ 
++	sweet_sc_ring[sweet_sc_total & 7u] = code;
++	sweet_sc_total++;
+ 	count++;
+ 	if ((count & 0xffu) == 0) {
+ 		unsigned slot = 2u + ((count >> 8) & 0x7u);
+@@ -1102,6 +1112,29 @@ sweet_hb_thread(void *arg, wait_result_t wres)
+ 	}
+ }
+ 
++static void
++sweet_sc_thread(void *arg, wait_result_t wres)
++{
++	(void)arg;
++	(void)wres;
++
++	for (;;) {
++		unsigned n = sweet_sc_total;
++		unsigned r0 = n > 0 ? sweet_sc_ring[(n - 1) & 7u] : 0;
++		unsigned r1 = n > 1 ? sweet_sc_ring[(n - 2) & 7u] : 0;
++		unsigned r2 = n > 2 ? sweet_sc_ring[(n - 3) & 7u] : 0;
++		unsigned r3 = n > 3 ? sweet_sc_ring[(n - 4) & 7u] : 0;
++		unsigned r4 = n > 4 ? sweet_sc_ring[(n - 5) & 7u] : 0;
++		unsigned r5 = n > 5 ? sweet_sc_ring[(n - 6) & 7u] : 0;
++		unsigned r6 = n > 6 ? sweet_sc_ring[(n - 7) & 7u] : 0;
++		unsigned r7 = n > 7 ? sweet_sc_ring[(n - 8) & 7u] : 0;
++
++		printf("SWEET SC: n=%u last=%u prev=%u %u %u %u %u %u %u\n",
++		    n, r0, r1, r2, r3, r4, r5, r6, r7);
++		IOSleep(2000);
++	}
++}
++
+ static void
+ sweet_hb_start(void)
+ {
+@@ -1126,6 +1159,10 @@ sweet_hb_start(void)
+ 	if (kernel_thread_start(sweet_hb_thread, NULL, &th) == KERN_SUCCESS) {
+ 		thread_deallocate(th);
+ 	}
++	th = THREAD_NULL;
++	if (kernel_thread_start(sweet_sc_thread, NULL, &th) == KERN_SUCCESS) {
++		thread_deallocate(th);
++	}
+ 	sweet_paint_start();
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
