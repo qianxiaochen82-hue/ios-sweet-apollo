@@ -258,17 +258,24 @@ until the whole-volume hash runs.
 **Whole-volume probes.** 0136 reprints the three sampled hashes every 5 s
 (`shim/out/shim-boot.apollo-embed-ufsprobe-hash.img`). 0137 adds a 24 GiB
 total hash (`expect ba3c164c...b0c0`) plus 24 x 1 GiB segment hashes, but it
-runs them in the reprint kthread after a 20 s sleep, and that thread never ran
-before `bsd_init` - the screen showed the probe's sampled hashes and no
-`SWEET FSHA:` at all. 0138
+runs them in the reprint kthread after a 20 s sleep. The probe itself is
+called from `sweet_stage_thread` (0127) at tick 1, so a thread context does
+exist, but 0137 has no entry marker: its first line is `progress 4/24 GiB`,
+i.e. 4 GiB of reads away, so "thread never started" and "pass slower than
+the few minutes we watched" look identical on screen - the photos show the
+probe's sampled hashes and no `SWEET FSHA:` at all. 0138
 (`xnu/patches/0138-sweet-ufs-verify-synchronous.patch`, commit `843d3ca`, CI
 run `43692951952` success) drops the thread: the probe prints
 `SWEET FSHA: begin` on entry, then reads 0..6,291,455 synchronously (1 MiB per
 READ(10)), prints `progress N/24 GiB` every 4 GiB, then `total` /
 `expect ... -> MATCH|MISMATCH` / `seg NN MISMATCH got ... want ...` /
-`N of 24 segments differ`. Trade-off: the boot stalls for the whole pass
-(about a minute or more) and no watchdog is running yet, but `begin` reaches
-the screen immediately, so the evidence is guaranteed. Image
+`N of 24 segments differ`. Trade-off: the heartbeat thread stalls for the
+whole pass, whose length is unknown until it runs (polled 1 MiB READ(10);
+`progress` every 4 GiB doubles as a throughput measurement). `begin` reaches
+the screen immediately, so the evidence is guaranteed even if the pass is
+slow; if 4 GiB takes more than about a minute, stop and switch to a coarse
+sieve (first 4 MiB of each of the 24 segments, 96 MiB total) instead of the
+full read. Image
 `shim/out/shim-boot.apollo-embed-ufssync.img`, 35,192,832 B, sha256
 `54ED9039237D49BB17F3A610C67D6049223FFF0AFE303B601636A6EF3F6F5229`; payload
 `payload/apollo-ufsprobe-sync.bin` 33,381,184 B, sha256
