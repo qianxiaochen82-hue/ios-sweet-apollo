@@ -1,0 +1,49 @@
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+index 6928957..a3a05c7 100644
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -27,6 +27,12 @@ extern unsigned char iso_font[256 * 16];
+ /* Initialized data must remain writable until disable, including panics. */
+ static unsigned int early_row, early_col;
+ static unsigned int early_started, early_disabled, early_panicking;
++/*
++ * 0152: the panic writer stays alive after sweet_early_disable(), so a panic
++ * during the user-mode phase still reaches the screen without kprintf and
++ * without the console lock.  Marks and progress stay disabled as before.
++ */
++static unsigned int early_panic_ready;
+ 
+ static void
+ sweet_early_clear_row(void)
+@@ -112,7 +118,7 @@ sweet_early_mark(unsigned int stage, const char *label)
+ void
+ sweet_early_panic(const char *fmt, va_list *args)
+ {
+-	if (early_disabled || early_panicking) {
++	if ((early_disabled && !early_panic_ready) || early_panicking) {
+ 		return;
+ 	}
+ 	early_panicking = 1;
+@@ -130,6 +136,7 @@ sweet_early_relocate(uint64_t base)
+ {
+ 	sweet_early_mark(8, "leaving bootstrap TTBR0");
+ 	early_fb = (volatile uint32_t *)(uintptr_t)base;
++	early_panic_ready = 1;
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	sweet_early_mark(9, "kernel framebuffer VA live");
+ }
+diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
+index 1350000..d4a07b0 100644
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1087,6 +1087,10 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
+ #if defined(SWEET)
+ 	/* No CPU/thread/debugger state is required for this first panic copy. */
+ 	sweet_early_panic(panic_format_str, panic_args);
++	{
++		extern void sweet_panic_begin(unsigned kind, const char *msg);
++		sweet_panic_begin(0, panic_format_str);
++	}
+ #endif
+ 
+ #if defined(__x86_64__) && (DEVELOPMENT || DEBUG)
