@@ -303,6 +303,26 @@ header @LBA1, backup @30,935,039, dumps in `apollo-backup\*_gpt_backup_34x4096.b
 Android user data is gone and not recoverable.
 
 
+**UFS root boot build (2026-11-15).** The root-device plumbing already exists:
+0028 maps `rd=ufsroot0` in IOFindBSDRoot, 0030 adds WRITE(10) gated by
+`ufsrw=1`, 0031 sets `oflags |= FWRITE` when `rootrw=1`. So switching root is
+a cmdline change only - payload `payload/apollo-ufsroot.bin` (kernel from CI
+run 43692951952, ADT `adt-fresh.bin`, ramdisk `root-known-good.img`) with
+`debug=0xc serial=3 cpus=8 keepsyms=1 sweetnokdp=1 rd=ufsroot0
+ufsroot=userdata ufsrw=1 rootrw=1 sweetusb=2`, embedded at 0x2f000 in
+`shim/out/shim-boot.apollo-embed-ufsroot.img` (35,192,832 B, sha256
+`78F1F23B687EE7C1587AEE6C6CF6D58F00D06ACC99994E36516A1EC8B53C9E86`;
+payload sha256 `B7BE60BC972BE8248C562D5CC0104179B7EC304259ECEB882617620DCD4A2BC1`).
+`shim/build.ps1` only fails in this shell because Set-Location does not update
+`[Environment]::CurrentDirectory`; `work/scratch/build-ufsroot.ps1` does both.
+Expect `SWEET UFS: "userdata" on LUN 0 ...`, `BSD root: ufsroot0, major n,
+minor 0`, no `cannot mount root`, then PID 1 from the HFS+ volume and
+`still alive`. Failure shapes: `panic: IOFindBSDRoot: SWEET UFS root ufsroot0
+unavailable: n` (UFS init), or repeated `cannot mount root, errno = n` then
+`panic: bsd_init: cannot find root vnode` (HFS+ mount). RW root writes
+filesystem metadata to userdata - that is inherent to `rootrw=1`, not a flash.
+
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
