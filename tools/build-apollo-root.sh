@@ -49,19 +49,7 @@ check "$appos" "$known_appos"
 
 # Volume names matter twice: apfs-fuse mounts a container as one directory per
 # volume, and mkiosroot.sh copies from $mount/root, i.e. it requires the OS
-# volume to be called "root".
-echo "== 2. APFS volumes"
-for f in "$os" "$sysos" "$appos"; do
-	echo "   -- $(basename "$f")"
-	sudo apfs-fuse -l "$f" 2>/dev/null | sed 's/^/      /'
-done
-
-# The volume names apfs-fuse reports must include "root" for every image.
-names_root=$(sudo apfs-fuse -l "$os" 2>/dev/null | tr -d '\r')
-for f in "$sysos" "$appos"; do
-	names_root+=$'\n'$(sudo apfs-fuse -l "$f" 2>/dev/null | tr -d '\r')
-done
-
+# volume to be called "root".  The listing in step 3 is the volume list.
 work=$(mktemp -d)
 mounted=()
 cleanup() {
@@ -83,7 +71,7 @@ mnt "$os" os
 mnt "$sysos" sysos
 mnt "$appos" appos
 
-echo "== 3. mount roots (mkiosroot.sh copies <mount>/root)"
+echo "== 2. mount roots (mkiosroot.sh copies <mount>/root)"
 for t in os sysos appos; do
 	printf '   %-6s %s\n' "$t" "$(ls -m "$work/$t" 2>/dev/null || echo '(empty)')"
 	[[ -d $work/$t/root ]] || die "$t volume is not named 'root' (see the listing above)"
@@ -92,7 +80,7 @@ done
 # Where the dyld shared cache actually lives.  iOS 16 split it into
 # dyld_shared_cache_arm64 + .01..N subcaches inside the SystemOS cryptex.
 # A11 (iPhone10,3/10,6) is arm64, not arm64e - there is no *_arm64e file.
-echo "== 4. dyld shared cache"
+echo "== 3. dyld shared cache"
 dsc_rel=System/Library/Caches/com.apple.dyld   # what mkiosroot.sh hard-links
 dsc=$work/sysos/root/$dsc_rel
 if [[ -d $dsc ]]; then
@@ -119,10 +107,10 @@ done
 cleanup
 trap - EXIT
 
-echo "== 5. build ($size, HFS_BLOCK=4096)"
+echo "== 4. build ($size, HFS_BLOCK=4096)"
 HFS_BLOCK=4096 "$here/mkiosroot.sh" "$os" "$sysos" "$appos" "$out" "$size"
 
-echo "== 6. post-build checks"
+echo "== 5. post-build checks"
 fsck.hfsplus -n "$out" | sed 's/^/   /'
 python3 - "$out" <<'PY'
 import os, struct, sys
@@ -130,7 +118,8 @@ p = sys.argv[1]
 with open(p, 'rb') as f:
     f.seek(1024)
     h = f.read(512)
-sig, ver, attr = struct.unpack_from('>HHI', h, 0)
+sig = h[0:2]
+ver, attr = struct.unpack_from('>HI', h, 2)
 bs, total, free = struct.unpack_from('>III', h, 40)
 journaled = bool(attr & 0x2000)
 print("   sig=%s version=%d journaled=%s case-sensitive=%s block=%d total=%d MiB free=%d MiB" % (

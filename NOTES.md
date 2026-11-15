@@ -141,8 +141,9 @@ right and the hard-link loop will work. Two details worth keeping:
     tools/build-apollo-root.sh                # ~/apollo-ipsw, ~/apollo-root-24g.img
     tools/build-apollo-root.sh /path/to/dmg-dir /path/to/out.img 24G
 
-The wrapper pre-flights (sha256 of the three images, `apfs-fuse -l` volume
-names, `<mount>/root` presence, presence of the dyld cache dir), then runs
+The wrapper pre-flights (sha256 of the three images, the volume names each
+container exposes - all three are `private-dir` + `root` - the `<mount>/root`
+presence and the dyld cache dir), then runs
 `HFS_BLOCK=4096 tools/mkiosroot.sh OS.dmg SYSTEMOS.dmg APPOS.dmg OUT 24G`, then
 `fsck.hfsplus -n` plus a volume-header check (signature HX = case-sensitive,
 version 5, journaled bit, block 4096). `HFS_BLOCK` is a new optional knob
@@ -153,16 +154,55 @@ SYSTEMOS.dmg and /System/Cryptexes/App from APPOS.dmg, keeps the dyld shared
 cache as hardlinks (`rsync -aH`), adds systembag.kb, the logd tree and the
 patched launchd plists.
 
-**Linux host: none on this Windows box.** `wsl -l -v` lists only
-`docker-desktop` (Stopped, v2) and `wsl -d docker-desktop` fails with "WSL2
-cannot start: virtualisation not enabled in the BIOS"; the Docker CLI exists
-(`C:\Program Files\Docker\Docker\resources\bin\docker.exe`) but its daemon is
-down and would need the same WSL2; there is no `~/.ssh/known_hosts`, so no
-known ssh target. Options, in order of least effort: (a) enable VT-x/SVM in the
-BIOS and use WSL2 (`sudo apt install apfs-fuse hfsprogs rsync`), (b) a one-off
-Ubuntu VM on this box, (c) run the wrapper on any Linux host with ~30 GB free
-and copy the three images over. The build needs ~8 GiB of source data, 24 GiB
-of image plus a few GiB of slack.
+**Built 2026-11-15: `work\apollo-root\apollo-root-24g.img`**
+
+    size 25,769,803,776 bytes = 24 GiB, 4 KiB aligned, ~11.7 GiB used
+    sha256 ba3c164cebbab163fe1ab14b36757bd5f8847bc22acbbaf04156e6043b28b0c0
+    volume header: sig HX (case-sensitive), version 5, journaled, block 4096,
+    total 24576 MiB, free 12629 MiB
+    fsck.hfsplus -n: "The volume iOSRoot appears to be OK." (after build and
+    again on the copy in the Windows workspace)
+
+Mounted read-only and checked by hand: `System/{Applications,Cryptexes,
+Developer,DriverKit,Library}` (Applications = 143 entries), `private/{etc,
+preboot,system_data,var,xarts}`, `System/Library/Caches/com.apple.dyld` has 44
+entries and `dyld_shared_cache_arm64` there is the same inode as
+`private/preboot/Cryptexes/OS/System/Library/Caches/com.apple.dyld/...`
+(hard link, no extra space), `private/var/keybags/systembag.kb` 227 B mode 0600,
+`private/var/db/{diagnostics,uuidtext,diagnostics/timesync}` are 272:272 with
+their `.migrated` markers. The 24 MiB -> 11.7 GiB growth is the decmpfs
+decompression of the shared cache (in the container the main cache is 384 KiB
+and `.symbols` 565 MiB; the volume keeps them uncompressed).
+
+**Linux host actually used: WSL2 distro `apollo`, everything on D:**
+
+    wsl --import apollo D:\wsl\apollo ubuntu-base-24.04.3-base-amd64.tar.gz --version 2
+
+- Docker Desktop 4.63 never came up on this box (no backend process, pipe
+  `dockerDesktopLinuxEngine` missing, backend log stuck at `hasNoVirtualization:
+  true` from before the BIOS change; its distros are unregistered), so the build
+  runs directly in WSL2.
+- `apfs-fuse` is not packaged in noble: built from source
+  (`git clone sgan81/apfs-fuse`, `cmake -DCMAKE_BUILD_TYPE=Release`, recursive
+  submodule) into `/usr/local/bin`. Its `-l` means "allow corrupt data", not
+  "list volumes".
+- The stock WSL kernel has `CONFIG_HFSPLUS_FS` unset and ships no hfsplus module,
+  so `mount -t hfsplus` cannot work. Built `linux-msft-wsl-6.6.87.2` from the
+  source tarball with the running kernel's `/proc/config.gz`, `HFSPLUS_FS=y`,
+  `DEBUG_INFO_BTF` off -> `D:\wsl\kernel\bzImage-hfs`, enabled with
+  `C:\Users\<user>\.wslconfig`:
+
+      [wsl2]
+      kernel=D:\\wsl\\kernel\\bzImage-hfs
+
+  Reboot with `wsl --shutdown`; `/proc/filesystems` then lists `hfsplus` and a
+  16 MiB `mkfs.hfsplus -s -J -b 4096` + `mount -o loop,force` smoke test passes.
+- Inputs are copied into the ext4 root before the build (`/mnt/d` reads the
+  4.7 GiB OS.dmg at ~65 MB/s); the finished image is copied back with
+  `cp --sparse=always` and the sha256 is compared on both sides.
+- Windows scripts must stay LF + no BOM: a PowerShell `Set-Content -Encoding
+  utf8` round-trip added a BOM and CRLF, which bash rejects
+  (`line 1: ﻿#!/bin/bash`, `set: pipefail: invalid option name`).
 
 **Device side needs no new code.** The UFS root path is already in the tree:
 `sweet_ufs.c` (0028/0030/0069) finds the GPT partition by name, does polled
