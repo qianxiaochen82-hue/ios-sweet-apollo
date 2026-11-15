@@ -1,0 +1,37 @@
+diff --git a/bsd/dev/apollo_keys.c b/bsd/dev/apollo_keys.c
+--- a/bsd/dev/apollo_keys.c
++++ b/bsd/dev/apollo_keys.c
+@@ -162,7 +162,7 @@
+ 		keys_dbg_pon_valid = true;
+ 		changed = true;
+ 	}
+-	if (!changed && (tick % 250u) != 0) {
++	if (!changed) {
+ 		return;
+ 	}
+ 	printf("SWEET KEYSDBG: pon=%#x gpio1..12:", pon);
+@@ -246,13 +246,6 @@
+ 			}
+ 		}
+ 		keys_dump_gpios();
+-		{
+-			static unsigned echo;
+-
+-			if ((echo++ % 100u) == 0) {
+-				keys_dump_gpio6(gok ? gpio : 0xffu);
+-			}
+-		}
+ 		keys_wait();
+ 	}
+ }
+@@ -290,10 +283,6 @@
+ 	keys_pon_apid = keys_find_apid(KEYS_PON_PPID, count);
+ 	for (uint32_t i = 0; i < KEYS_GPIO_PINS; ++i) {
+ 		keys_pin_apid[i] = keys_find_apid(KEYS_GPIO_PIN_PPID(i), count);
+-		if (keys_pin_apid[i] != KEYS_NO_APID) {
+-			printf("SWEET KEYS(apollo): pin%u ppid=%#x apid=%u\n",
+-			    i + 1u, KEYS_GPIO_PIN_PPID(i), keys_pin_apid[i]);
+-		}
+ 	}
+ 	keys_gpio_apid = keys_pin_apid[5];
+ 	if (keys_gpio_apid == KEYS_NO_APID) {
