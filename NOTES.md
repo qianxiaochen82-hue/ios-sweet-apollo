@@ -95,19 +95,74 @@ partition inside the usable range.
   (224,411,608 x 512 B as the BSD layer sees it).
 - A 24 GiB image = 6,291,456 x 4 KiB, so ~83 GiB of headroom.
 
+**Inputs: unpacked and verified (2026-11-15)**
+
+    D:\apk\github_project\mi_ios\iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw
+    6,171,035,648 bytes: 5.75 GiB, 91 zip entries, CRC-clean (downloaded
+    2026-11-14 12:42)
+    BuildManifest: ProductVersion 16.7.16, ProductBuildVersion 20H392,
+    SupportedProductTypes [iPhone10,6, iPhone10,3]
+
+The three images live in `work\apollo-ipsw\` (extracted with `zipfile`, which
+verifies each entry's CRC; not in git, too large):
+
+| file | bytes | sha256 |
+| --- | --- | --- |
+| OS.dmg | 4,730,814,044 | 80f426d5b8fca8552f95be427434f1911dbb4c2c6d28aad94f2426ddd0c92483 |
+| SYSTEMOS.dmg | 2,743,074,816 | 9cd738f3b0169055549df84ad6d8d13e50a2da39af618ce0522ca4e06df86849 |
+| APPOS.dmg | 10,485,760 | 391f2df322c3172b021b2874f6da5c3e78b70b3df8f502e1a4af2b1d715c4608 |
+
+OS.dmg is UDIF (koly v4) with LZVN-compressed data fork, plist says 5.25 GiB
+uncompressed (11,006,019 x 512 B); SYSTEMOS.dmg and APPOS.dmg are raw APFS
+containers (`NXSB` at 0x20). APPOS is only 10 MB on A11 - a nearly empty App
+cryptex, so `copy "$work/appos/root"` is the fragile step (see below).
+
+**dyld shared cache, checked against `mkiosroot.sh`'s assumption**
+
+Byte-level walk of the SystemOS APFS file-system tree (raw scan of the b-tree
+leaf holding the dentries) shows the cache exactly where the script expects it:
+
+    System/Library/Caches/com.apple.dyld/
+        dyld_shared_cache_arm64  dyld_shared_cache_arm64.symbols
+        dyld_shared_cache_arm64.01 .. .42    (split subcaches, iOS 16 layout)
+
+so `dsc=private/preboot/Cryptexes/OS/System/Library/Caches/com.apple.dyld` is
+right and the hard-link loop will work. Two details worth keeping:
+- A11 (iPhone10,3/10,6) has no PAC, so the cache is `..._arm64`: there is no
+  `dyld_shared_cache_arm64e` anywhere in the image (0 hits).
+- The cryptex also ships a DriverKit cache in `System/DriverKit/System/
+  Library/dyld/` (main + .symbols only); the generic "cryptex file with no OS
+  counterpart" loop hard-links it into the root as well, which is harmless.
+- The path string list in dyld itself includes both `System/Library/dyld/` and
+  `System/Library/Caches/com.apple.dyld/`, so either landing spot is searched.
+
 **Build (Linux host: apfs-fuse + hfsprogs + rsync), 24 GiB, 4K blocks**
 
-    HFS_BLOCK=4096 tools/mkiosroot.sh OS.dmg SYSTEMOS.dmg APPOS.dmg \
-        apollo-root-24g.img 24G
+    tools/build-apollo-root.sh                # ~/apollo-ipsw, ~/apollo-root-24g.img
+    tools/build-apollo-root.sh /path/to/dmg-dir /path/to/out.img 24G
 
-`HFS_BLOCK` is a new optional knob (unset = old behaviour) so the HFS+ volume's
-allocation blocks match the device's 4 KiB logical blocks; the volume is
-journaled (`-J`), case-sensitive (`-s`), named iOSRoot. The script lays down
-/System from OS.dmg, /System/Cryptexes/OS from SYSTEMOS.dmg and
-/System/Cryptexes/App from APPOS.dmg, keeps the dyld shared cache as hardlinks
-(`rsync -aH`), adds systembag.kb, the logd tree and the patched launchd plists.
-**Blocker:** this Windows box has no IPSW and no OS/SYSTEMOS/APPOS dmg (only
-the 8/16 MB early root-hfs experiments), and the script needs the Linux tools.
+The wrapper pre-flights (sha256 of the three images, `apfs-fuse -l` volume
+names, `<mount>/root` presence, presence of the dyld cache dir), then runs
+`HFS_BLOCK=4096 tools/mkiosroot.sh OS.dmg SYSTEMOS.dmg APPOS.dmg OUT 24G`, then
+`fsck.hfsplus -n` plus a volume-header check (signature HX = case-sensitive,
+version 5, journaled bit, block 4096). `HFS_BLOCK` is a new optional knob
+(unset = old behaviour) so the HFS+ allocation blocks match the device's 4 KiB
+logical blocks; the volume is journaled (`-J`), case-sensitive (`-s`), named
+iOSRoot. The script lays down /System from OS.dmg, /System/Cryptexes/OS from
+SYSTEMOS.dmg and /System/Cryptexes/App from APPOS.dmg, keeps the dyld shared
+cache as hardlinks (`rsync -aH`), adds systembag.kb, the logd tree and the
+patched launchd plists.
+
+**Linux host: none on this Windows box.** `wsl -l -v` lists only
+`docker-desktop` (Stopped, v2) and `wsl -d docker-desktop` fails with "WSL2
+cannot start: virtualisation not enabled in the BIOS"; the Docker CLI exists
+(`C:\Program Files\Docker\Docker\resources\bin\docker.exe`) but its daemon is
+down and would need the same WSL2; there is no `~/.ssh/known_hosts`, so no
+known ssh target. Options, in order of least effort: (a) enable VT-x/SVM in the
+BIOS and use WSL2 (`sudo apt install apfs-fuse hfsprogs rsync`), (b) a one-off
+Ubuntu VM on this box, (c) run the wrapper on any Linux host with ~30 GB free
+and copy the three images over. The build needs ~8 GiB of source data, 24 GiB
+of image plus a few GiB of slack.
 
 **Device side needs no new code.** The UFS root path is already in the tree:
 `sweet_ufs.c` (0028/0030/0069) finds the GPT partition by name, does polled
