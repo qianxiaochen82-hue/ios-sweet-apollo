@@ -244,6 +244,58 @@ partition, then stop - nothing is written.
 7. Rollback: userdata is destroyed by this - the old Android user data is not
    recoverable, which the user has already accepted.
 
+**Write performed (2026-11-15, user-approved).** `img2simg -s` ->
+`apollo-root-24g.img.simg` (12,145,346,844 B, 27,938 chunks: 13,896 RAW +
+14,042 FILL; image sha256 `ba3c164c...b0c0`), then `fastboot -S 64M flash
+userdata`: 185/185 batches OKAY, exit 0, 370.4 s. Read-back probe: first and
+middle block MATCH; the *last* 4 KiB block (HFS+ alternate volume header)
+reads `cd01ba6c...` instead of `9c9158c9...`. Off-line checks rule out the
+expectation and the sparse tail (last chunk #27,938 is RAW and covers block
+6,291,455, no DONT_CARE, stream ends exactly at EOF), so the final tail chunk
+really did not land. Everything else in the 24 GiB stays unverified on device
+until the whole-volume hash runs.
+
+**Whole-volume probes.** 0136 reprints the three sampled hashes every 5 s
+(`shim/out/shim-boot.apollo-embed-ufsprobe-hash.img`). 0137 adds a 24 GiB
+total hash (`expect ba3c164c...b0c0`) plus 24 x 1 GiB segment hashes, but it
+runs them in the reprint kthread after a 20 s sleep, and that thread never ran
+before `bsd_init` - the screen showed the probe's sampled hashes and no
+`SWEET FSHA:` at all. 0138
+(`xnu/patches/0138-sweet-ufs-verify-synchronous.patch`, commit `843d3ca`, CI
+run `43692951952` success) drops the thread: the probe prints
+`SWEET FSHA: begin` on entry, then reads 0..6,291,455 synchronously (1 MiB per
+READ(10)), prints `progress N/24 GiB` every 4 GiB, then `total` /
+`expect ... -> MATCH|MISMATCH` / `seg NN MISMATCH got ... want ...` /
+`N of 24 segments differ`. Trade-off: the boot stalls for the whole pass
+(about a minute or more) and no watchdog is running yet, but `begin` reaches
+the screen immediately, so the evidence is guaranteed. Image
+`shim/out/shim-boot.apollo-embed-ufssync.img`, 35,192,832 B, sha256
+`54ED9039237D49BB17F3A610C67D6049223FFF0AFE303B601636A6EF3F6F5229`; payload
+`payload/apollo-ufsprobe-sync.bin` 33,381,184 B, sha256
+`19CBF02515CB7909D88F58B69CC1B886AE3ED0ADD2B4945236C9CCD1C5FC6FE7`
+(payload at 0x2f000, `SWEET FSHA: begin` present once). Read-only, no writes.
+
+**Patch-application audit (why no `SWEET FSHA:` and why `pin6-apid` looked
+stale).** CI copies `xnu/patches` to `dxb/patches` and applies them by sorted
+name; run `43691123434` (0137) and `43692951952` (0138) both log
+`Applying patch:` for 0131-0138, including 0133. The only skips are
+`0120-sweet-usb-build-tag` (long known) plus `iobuffermemd_monterey`,
+`skywalk_sonoma`, `syntax_checker_sonoma` and `TrustCache` - unrelated
+upstream patches that always skip. Numbers 0123-0125 and 0130 are deliberate
+deletions in history, not omissions. `pin6-apid=` and `SWEET HB stage=` are
+NOT stale-kernel markers: 0133 only removed the per-pin `pin%u ppid=...`
+table, the gpio6 echo and the 250-tick gate; the one-shot init summary
+`SWEET KEYS(apollo): arb=... pin6-apid=%u ...` was never removed, and
+`SWEET HB stage=%u tick=%u` comes from the early heartbeat that no patch
+deleted. The photos are therefore consistent with the current kernel; the
+missing `SWEET FSHA:` is the dead kthread, not a skipped patch.
+
+**Rollback.** GPT is untouched (nothing was created or resized): primary
+header @LBA1, backup @30,935,039, dumps in `apollo-backup\*_gpt_backup_34x4096.bin`.
+`userdata` can be re-flashed or wiped from fastboot at any time; the old
+Android user data is gone and not recoverable.
+
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
