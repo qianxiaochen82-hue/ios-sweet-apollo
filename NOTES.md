@@ -59,6 +59,20 @@
   KEYSDBG snapshot every 5 s. Both are read-only: no register writes yet; the
   write step (pull/en) is what hung the device before, keep it separate and
   gated behind a boot arg.
+  0131 (`tools/mk-keys-rt-patch.py`) moved the level read from 0x0a to 0x10
+  (the vendor's PMIC_MPP_REG_RT_STS); on the device rt read 1 and never
+  followed the key, and all twelve dump values were identical.
+  0132 (`tools/mk-keys-pin-apid-patch.py`) explains both: vendor
+  pinctrl-spmi-gpio.c gives every pin its own 0x100 window and numbers DT
+  gpio<n> as `gpio_idx = i + 1`, so DT gpio6 is the sixth window, 0xc500, with
+  peripheral id 0xc5. The arbiter opcode only carries the low address byte, so
+  `0xc610 & 0xff` hit register 0x10 of ppid 0xc0 = GPIO1 (finger-detect), and
+  every pin in the loop resolved to that one register. 0132 resolves
+  `ppid = 0xc0 + i` per pin, uses ppid 0xc5 for the key, and prints the existing
+  pin/ppid/apid table at boot (PM8150 only has gpio1/3/6/7/9/10 per
+  `qcom,gpios-disallowed = <2 4 5 8>`). Still read-only. Image:
+  `shim/out/shim-boot.apollo-embed-keys0132.img`, 35,192,832 B, SHA-256
+  `2EA03DB1A25537B2071A5CE3C7AB2F6DA37BA4C531CB859DAAE75DC49ADA38ED`.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
