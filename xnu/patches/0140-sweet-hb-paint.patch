@@ -1,0 +1,21 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -964,11 +964,19 @@
+ 	(void)arg;
+ 	(void)wres;
+ 	for (;;) {
++		unsigned b;
++		uint32_t color;
++
+ 		IOSleep(5000);
+ 		tick++;
++		color = (tick & 1u) ? 0xff00ff00u : 0xff0000ffu;
++		for (b = 0; b < 16; b++) {
++			sweet_stamp_block_at(5, b, color);
++			sweet_stamp_block_at(6, b, color);
++		}
+ 		printf("SWEET HB2 %u stage=%u\n", tick, sweet_stamp_stage);
+ 	}
+ }
+ 
+ static void
