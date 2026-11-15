@@ -1,0 +1,19 @@
+diff --git a/bsd/dev/apollo_keys.c b/bsd/dev/apollo_keys.c
+--- a/bsd/dev/apollo_keys.c
++++ b/bsd/dev/apollo_keys.c
+@@ -36,7 +36,14 @@
+ #define KEYS_PON_RT      0x0810u
+ #define KEYS_GPIO_STRIDE 0x100u
+ #define KEYS_GPIO6       (6u * KEYS_GPIO_STRIDE)  /* 0xc600 */
+-#define KEYS_GPIO_RT     0x0au    /* PMIC5 GPIO pin status */
++/*
++ * The live pad level lives in DIG_RT_STATUS at 0x10, the offset the vendor
++ * pinctrl-spmi-gpio.c reads (PMIC_MPP_REG_RT_STS, valid bit0). 0x0a is not a
++ * PMIC5 GPIO status register on this block: reading it returns 0 for every
++ * pin, which is why volume-up looked dead while its config was already right
++ * (mode=input, vin=1, pull=0 == 30uA pull-up, en=0x80).
++ */
++#define KEYS_GPIO_RT     0x10u    /* PMIC5 GPIO DIG_RT_STATUS (pad level) */
+ #define KEYS_NO_APID     0xffffu
+ 
+ static vm_offset_t keys_core, keys_obs, keys_cnfg;
