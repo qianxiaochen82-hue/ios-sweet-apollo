@@ -1,0 +1,56 @@
+diff --git a/bsd/dev/apollo_keys.c b/bsd/dev/apollo_keys.c
+--- a/bsd/dev/apollo_keys.c
++++ b/bsd/dev/apollo_keys.c
+@@ -137,7 +137,7 @@
+ 		keys_dbg_pon_valid = true;
+ 		changed = true;
+ 	}
+-	if (!changed) {
++	if (!changed && (tick % 250u) != 0) {
+ 		return;
+ 	}
+ 	printf("SWEET KEYSDBG: pon=%#x gpio1..12:", pon);
+@@ -153,7 +153,7 @@
+  * the level alone cannot tell us whether this is the right pin.
+  */
+ static void
+-keys_dump_gpio6(void)
++keys_dump_gpio6(uint8_t rt)
+ {
+ 	static const uint8_t off[] = { 0x04u, 0x05u, 0x40u, 0x41u,
+ 	    0x42u, 0x43u, 0x45u, 0x46u };
+@@ -165,9 +165,9 @@
+ 		ok[i] = keys_read(keys_gpio_apid,
+ 		    (uint16_t)(KEYS_GPIO6 + off[i]), &v[i]);
+ 	}
+-	printf("SWEET KEYS(apollo): gpio6 cfg type=%#x/%d sub=%#x/%d mode=%#x/%d vin=%#x/%d pull=%#x/%d in=%#x/%d out=%#x/%d en=%#x/%d\n",
++	printf("SWEET KEYS(apollo): gpio6 type=%#x/%d sub=%#x/%d mode=%#x/%d vin=%#x/%d pull=%#x/%d in=%#x/%d out=%#x/%d en=%#x/%d rt=%#x\n",
+ 	    v[0], ok[0], v[1], ok[1], v[2], ok[2], v[3], ok[3],
+-	    v[4], ok[4], v[5], ok[5], v[6], ok[6], v[7], ok[7]);
++	    v[4], ok[4], v[5], ok[5], v[6], ok[6], v[7], ok[7], rt);
+ }
+ 
+ static void
+@@ -222,6 +222,13 @@
+ 			}
+ 		}
+ 		keys_dump_gpios();
++		{
++			static unsigned echo;
++
++			if ((echo++ % 100u) == 0) {
++				keys_dump_gpio6(gok ? gpio : 0xffu);
++			}
++		}
+ 		keys_wait();
+ 	}
+ }
+@@ -272,7 +279,7 @@
+ 	if (!pok || keys_gpio_apid == KEYS_NO_APID) {
+ 		keys_dump_map(count);
+ 	}
+-	keys_dump_gpio6();
++	keys_dump_gpio6(gpio);
+ 	kern_return_t kr = kernel_thread_start(keys_thread, NULL, &thread);
+ 	if (kr == KERN_SUCCESS) {
+ 		thread_deallocate(thread);
