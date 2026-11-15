@@ -1,0 +1,64 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 65fd681..134950e 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -941,6 +941,21 @@ sweet_stage_heartbeat(void)
+  * line, the scheduler and the console path are alive; if it stops while other
+  * output continues, only this thread is stuck.
+  */
++/*
++ * 0143: the UFS driver calls this when a command times out. Row 8 stays empty
++ * while the disk is healthy and grows one red block per fault, so a wedged
++ * disk is visible even with the text console muted.
++ */
++void
++sweet_stamp_ufs_fault(uint32_t n, uint32_t color)
++{
++	uint32_t i;
++
++	for (i = 0; i < n && i < 16; i++) {
++		sweet_stamp_block_at(8, i, color);
++	}
++}
++
+ static void
+ sweet_paint_thread(void *arg, wait_result_t wres)
+ {
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index db856b0..0959aac 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -145,6 +145,10 @@ dma_clean(uint32_t off, uint32_t len)
+ 	clean_dcache64((addr64_t)(su.dma_pa + off), len, TRUE);
+ }
+ 
++/* 0143: painted by bsd_init.c, console-independent UFS fault counter. */
++extern void sweet_stamp_ufs_fault(uint32_t n, uint32_t color);
++static unsigned sweet_ufs_faults;
++
+ /*
+  * One SCSI command in slot 0, data (if any) to/from the bounce buffer
+  * (to the device when write is set). Returns 0 or an errno.
+@@ -223,8 +227,20 @@ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+ 	while (ufs_rd(REG_UTRLDBR) & 1) {
+ 		uint64_t now = mach_absolute_time();
+ 		if (now > deadline) {
+-			ufs_wr(REG_UTRLCLR, ~1u);
+-			printf("SWEET UFS: command 0x%02x timed out\n", cdb[0]);
++			/*
++			 * UTRLCLR is write-1-to-clear per slot and this driver only
++			 * ever uses slot 0, so clear bit 0 alone.  ~1u cleared every
++			 * slot *except* the one that was busy, which left the
++			 * controller permanently wedged after a single timeout.
++			 */
++			ufs_wr(REG_UTRLCLR, 1u);
++			sweet_ufs_faults++;
++			if (sweet_ufs_faults <= 3) {
++				printf("SWEET UFS: command 0x%02x timed out (#%u)\n",
++				    cdb[0], sweet_ufs_faults);
++			}
++			sweet_stamp_ufs_fault(sweet_ufs_faults > 16 ? 16 : sweet_ufs_faults,
++			    0xffff0000u);
+ 			return ETIMEDOUT;
+ 		}
+ 		if (sleepable && now >= spin_until) {
