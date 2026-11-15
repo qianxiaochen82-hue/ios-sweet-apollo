@@ -1,0 +1,85 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index fffe60e..dd114c4 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -122,6 +122,15 @@ static LCK_MTX_DECLARE(sweet_ufs_lock, &sweet_ufs_grp);
+ /* Set by sweet_ufs_probe(): attach and read the GPT, but start nothing. */
+ static bool sweet_ufs_probe_only;
+ 
++/*
++ * The console ring scrolls the probe's evidence lines away long before the
++ * boot finishes, and photographing the screen is the only way to read them,
++ * so a probe-only boot re-prints the same lines every few seconds.
++ */
++static int sweet_ufs_reprint_chan;
++static char sweet_ufs_probe_name[64] = "userdata";
++static uint64_t sweet_ufs_probe_first, sweet_ufs_probe_last;
++
+ static inline uint32_t
+ ufs_rd(uint32_t off)
+ {
+@@ -654,6 +663,9 @@ sweet_ufs_init(void)
+ 	}
+ 	if (!error) {
+ 		error = ufs_find_partition(want);
++		if (!error) {
++			strlcpy(sweet_ufs_probe_name, want, sizeof(sweet_ufs_probe_name));
++		}
+ 	}
+ 	lck_mtx_unlock(&sweet_ufs_lock);
+ 	if (error) {
+@@ -713,6 +725,33 @@ sweet_ufs_hash_block(uint64_t lba, const char *what)
+ 	printf("\n");
+ }
+ 
++/*
++ * Re-print the evidence the probe already produced: by the time the screen is
++ * readable the originals are dozens of pages up, so this repeats them every
++ * few seconds. Read-only, same lock as the probe, started only by
++ * sweet_ufs_probe().
++ */
++#define SWEET_UFS_REPRINT_SECS  5
++
++static void
++sweet_ufs_reprint_thread(__unused void *arg, __unused wait_result_t wr)
++{
++	uint64_t nblocks = sweet_ufs_probe_last - sweet_ufs_probe_first + 1;
++
++	for (;;) {
++		(void)tsleep(&sweet_ufs_reprint_chan, PZERO, "ufsreprint",
++		    hz * SWEET_UFS_REPRINT_SECS);
++		lck_mtx_lock(&sweet_ufs_lock);
++		printf("SWEET GPT: \"%s\" LBA 0x%llx..0x%llx, %llu blocks = %llu MiB, %llu BSD sectors\n",
++		    sweet_ufs_probe_name, sweet_ufs_probe_first, sweet_ufs_probe_last,
++		    nblocks, nblocks * UFS_BLOCK >> 20, nblocks * UFS_BLOCK >> 9);
++		sweet_ufs_hash_block(sweet_ufs_probe_first, "first");
++		sweet_ufs_hash_block(sweet_ufs_probe_first + 3145728, "middle");
++		sweet_ufs_hash_block(sweet_ufs_probe_first + 6291455, "last");
++		lck_mtx_unlock(&sweet_ufs_lock);
++	}
++}
++
+ /*
+  * Boot-arg gated read-only probe for rd=md0 boots: the UFS root path never
+  * runs there, so this is the only way to prove the controller can be taken
+@@ -727,6 +766,10 @@ sweet_ufs_probe(void)
+ 	sweet_ufs_probe_only = true;
+ 	error = sweet_ufs_init();
+ 	if (!error) {
++		thread_t thread;
++
++		sweet_ufs_probe_first = su.first_block;
++		sweet_ufs_probe_last = su.first_block + su.nblocks - 1;
+ 		lck_mtx_lock(&sweet_ufs_lock);
+ 		sweet_ufs_hash_block(su.first_block, "first");
+ 		/* The image is 24 GiB = 6291456 blocks, so these two are the
+@@ -735,6 +778,9 @@ sweet_ufs_probe(void)
+ 		sweet_ufs_hash_block(su.first_block + 3145728, "middle");
+ 		sweet_ufs_hash_block(su.first_block + 6291455, "last");
+ 		lck_mtx_unlock(&sweet_ufs_lock);
++		if (kernel_thread_start(sweet_ufs_reprint_thread, NULL, &thread) == KERN_SUCCESS) {
++			thread_deallocate(thread);
++		}
+ 	}
+ 	printf("SWEET UFS: read-only probe %s (%d)\n", error ? "failed" : "ok", error);
+ 	return error;
