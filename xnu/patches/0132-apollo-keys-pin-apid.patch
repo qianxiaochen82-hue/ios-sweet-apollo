@@ -1,0 +1,108 @@
+diff --git a/bsd/dev/apollo_keys.c b/bsd/dev/apollo_keys.c
+--- a/bsd/dev/apollo_keys.c
++++ b/bsd/dev/apollo_keys.c
+@@ -34,8 +34,16 @@
+ #define KEYS_PON_PPID    0x008u   /* PM8150 PON   @ 0x800 */
+ #define KEYS_GPIO_PPID   0x0c0u   /* PM8150 GPIO  @ 0xc000 */
+ #define KEYS_PON_RT      0x0810u
+-#define KEYS_GPIO_STRIDE 0x100u
+-#define KEYS_GPIO6       (6u * KEYS_GPIO_STRIDE)  /* 0xc600 */
++/*
++ * Every PM8150 GPIO pin is its own SPMI peripheral: pin i (0-based)
++ * sits at 0xc000 + i*0x100 and is resolved by ppid 0xc0 + i.  DT
++ * gpio<n> is pin n (vendor pinctrl uses gpio_idx = i + 1), so the
++ * volume-up key is ppid 0xc5 at 0xc500 - reading the block base
++ * 0xc0 instead was reading gpio1, the finger-detect pin.
++ */
++#define KEYS_GPIO_PIN_PPID(i) (0x0c0u + (i))
++#define KEYS_GPIO6_PPID  KEYS_GPIO_PIN_PPID(5u)  /* 0xc500 */
++#define KEYS_GPIO_PINS   10u   /* reg 0xa00 / 0x100 */
+ /*
+  * The live pad level lives in DIG_RT_STATUS at 0x10, the offset the vendor
+  * pinctrl-spmi-gpio.c reads (PMIC_MPP_REG_RT_STS, valid bit0). 0x0a is not a
+@@ -48,6 +56,7 @@
+ 
+ static vm_offset_t keys_core, keys_obs, keys_cnfg;
+ static uint16_t keys_pon_apid = KEYS_NO_APID, keys_gpio_apid = KEYS_NO_APID;
++static uint16_t keys_pin_apid[KEYS_GPIO_PINS];
+ static uint32_t keys_version, keys_last_status;
+ static bool keys_started;
+ static int keys_sleep_chan;
+@@ -102,6 +111,16 @@
+ 	return false;
+ }
+ 
++/* One register of one pin, through that pin's own peripheral. */
++static bool
++keys_pin_read(uint32_t pin, uint16_t reg, uint8_t *out)
++{
++	if (pin >= KEYS_GPIO_PINS) {
++		return false;
++	}
++	return keys_read(keys_pin_apid[pin], reg, out);
++}
++
+ /*
+  * Debug aid (boot-arg sweetkeydebug=1): snapshot every PM8150 GPIO so a key
+  * wired to a pin we did not expect becomes visible.  Only pin status changes
+@@ -130,8 +149,7 @@
+ 	}
+ 	for (int p = 1; p <= 12; ++p) {
+ 		cur[p] = 0;
+-		ok[p] = keys_read(keys_gpio_apid,
+-		    (uint16_t)(p * KEYS_GPIO_STRIDE + KEYS_GPIO_RT), &cur[p]);
++		ok[p] = keys_pin_read((uint32_t)p - 1u, KEYS_GPIO_RT, &cur[p]);
+ 		if (ok[p] && (!keys_dbg_valid[p] || keys_dbg_last[p] != cur[p])) {
+ 			keys_dbg_last[p] = cur[p];
+ 			keys_dbg_valid[p] = true;
+@@ -169,8 +187,7 @@
+ 
+ 	for (unsigned i = 0; i < 8; ++i) {
+ 		v[i] = 0;
+-		ok[i] = keys_read(keys_gpio_apid,
+-		    (uint16_t)(KEYS_GPIO6 + off[i]), &v[i]);
++		ok[i] = keys_pin_read(5u, off[i], &v[i]);
+ 	}
+ 	printf("SWEET KEYS(apollo): gpio6 type=%#x/%d sub=%#x/%d mode=%#x/%d vin=%#x/%d pull=%#x/%d in=%#x/%d out=%#x/%d en=%#x/%d rt=%#x\n",
+ 	    v[0], ok[0], v[1], ok[1], v[2], ok[2], v[3], ok[3],
+@@ -210,7 +227,7 @@
+ 	for (;;) {
+ 		uint8_t pon = 0, gpio = 0;
+ 		bool pok = keys_read(keys_pon_apid, KEYS_PON_RT, &pon);
+-		bool gok = keys_read(keys_gpio_apid, KEYS_GPIO6 + KEYS_GPIO_RT, &gpio);
++		bool gok = keys_pin_read(5u, KEYS_GPIO_RT, &gpio);
+ 		int now[3] = {!!(pon & 1u), !(gpio & 1u), !!(pon & 2u)};
+ 		if (!pok || !gok) {
+ 			if ((errors++ % 250u) == 0) {
+@@ -271,18 +288,24 @@
+ 		return;
+ 	}
+ 	keys_pon_apid = keys_find_apid(KEYS_PON_PPID, count);
+-	keys_gpio_apid = keys_find_apid(KEYS_GPIO_PPID, count);
++	for (uint32_t i = 0; i < KEYS_GPIO_PINS; ++i) {
++		keys_pin_apid[i] = keys_find_apid(KEYS_GPIO_PIN_PPID(i), count);
++		if (keys_pin_apid[i] != KEYS_NO_APID) {
++			printf("SWEET KEYS(apollo): pin%u ppid=%#x apid=%u\n",
++			    i + 1u, KEYS_GPIO_PIN_PPID(i), keys_pin_apid[i]);
++		}
++	}
++	keys_gpio_apid = keys_pin_apid[5];
+ 	if (keys_gpio_apid == KEYS_NO_APID) {
+-		/* PM8150 GPIO may be decoded one slot higher (see PM6150L: 0xc1). */
+-		keys_gpio_apid = keys_find_apid(KEYS_GPIO_PPID + 1u, count);
++		keys_gpio_apid = keys_find_apid(KEYS_GPIO_PPID, count);
+ 	}
+ 	uint8_t pon = 0, gpio = 0, gpio_alt = 0;
+ 	bool pok = keys_read(keys_pon_apid, KEYS_PON_RT, &pon);
+-	bool gok = keys_read(keys_gpio_apid, KEYS_GPIO6 + KEYS_GPIO_RT, &gpio);
+-	bool aok = keys_read(keys_gpio_apid, KEYS_GPIO6 + 0x10u, &gpio_alt);
+-	printf("SWEET KEYS(apollo): arb=%#x apids=%u pon-apid=%u gpio-apid=%u pon=%#x/%d gpio6[0x0a]=%#x/%d gpio6[0x10]=%#x/%d\n",
++	bool gok = keys_pin_read(5u, KEYS_GPIO_RT, &gpio);
++	bool aok = keys_pin_read(5u, 0x40u, &gpio_alt);
++	printf("SWEET KEYS(apollo): arb=%#x apids=%u pon-apid=%u pin6-apid=%u pon=%#x/%d gpio6[mode]=%#x/%d gpio6[rt]=%#x/%d\n",
+ 	    keys_version, count, keys_pon_apid, keys_gpio_apid,
+-	    pon, pok, gpio, gok, gpio_alt, aok);
++	    pon, pok, gpio_alt, aok, gpio, gok);
+ 	if (!pok || keys_gpio_apid == KEYS_NO_APID) {
+ 		keys_dump_map(count);
+ 	}
