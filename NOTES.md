@@ -36,6 +36,29 @@
   verified cpus=1 image by exactly one byte (0x2f060, '1' -> '8'). Rollback:
   rebuild with `-Payload payload\known-good.bin`, or boot
   `shim/out/shim-boot.apollo-embed-cpus1.img`.
+  Verified on the device 2026-11-15: `P 100%`, `STAGE 6/7/8`, `MOUNT TRY 1`,
+  no panic -> all eight CPUs started (the SMP start path panics on any failure).
+  Rollback image kept as `shim/out/shim-boot.apollo-embed-smp8.img`.
+- **XNU rebuilds (PM8150 step).** Push `apollo` to
+  `https://github.com/qianxiaochen82-hue/ios-sweet-apollo` (remote `gh`), then
+  `gh workflow run xnu.yml -R qianxiaochen82-hue/ios-sweet-apollo --ref apollo
+  -f machine_config=SWEET -f kernel_config=DEVELOPMENT -f keep_going=true`
+  (~9 min), `gh run download <id> -n xnu-kernel`. The artifact is the kernel
+  only; the payload still needs the ADT + root image:
+  `payload/adt-fresh.bin` from `tools/mkadt.py`, root image extracted from
+  `payload/known-good.bin` segment 10 (`payload/root-known-good.img`, 0xff6000 B),
+  then `tools/mkpayload.py <kernel> payload/adt-fresh.bin out.bin
+  --ramdisk payload/root-known-good.img --cmdline "debug=0xc serial=3 cpus=8
+  keepsyms=1 sweetnokdp=1 rd=md0 rootrw=1 sweetusb=2 sweetkeydebug=1"`.
+  The ADT difference vs known-good is only `/chosen random-seed`.
+- **PM8150 volume-up (step 2 of the device plan).** Power and volume-down work
+  via `PON_RT_STS`; volume-up on PM8150 GPIO6 never moves. 0128
+  (`tools/mk-keys-diag-patch.py`) reads GPIO6 `0x04/0x05/0x40/0x41/0x42/0x43/
+  0x45/0x46` read-only; 0129 (`tools/mk-keys-echo-patch.py`) re-prints it from
+  the keys thread every 2 s so it survives the boot log, and repeats the
+  KEYSDBG snapshot every 5 s. Both are read-only: no register writes yet; the
+  write step (pull/en) is what hung the device before, keep it separate and
+  gated behind a boot arg.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
