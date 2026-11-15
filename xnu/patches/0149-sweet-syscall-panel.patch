@@ -1,0 +1,116 @@
+diff --git a/bsd/dev/arm/systemcalls.c b/bsd/dev/arm/systemcalls.c
+index a337cc3..192bc3b 100644
+--- a/bsd/dev/arm/systemcalls.c
++++ b/bsd/dev/arm/systemcalls.c
+@@ -107,6 +107,12 @@ unix_syscall(
+ 
+ 	code = arm_get_syscall_number(state);
+ 
++	/* 0149: paint process 1's call number before it can block (see bsd_init.c) */
++	if (proc_pid(proc) == 1) {
++		extern void sweet_syscall_note(unsigned code);
++		sweet_syscall_note(code);
++	}
++
+ #define unix_syscall_kprintf(x...)      /* kprintf("unix_syscall: " x) */
+ 
+ 	if (kdebug_enable && !code_is_kdebug_trace(code)) {
+@@ -184,6 +190,10 @@ unix_syscall(
+ 
+ 	AUDIT_SYSCALL_ENTER(code, proc, uthread);
+ 	error = (*(callp->sy_call))(proc, &uthread->uu_arg[0], &(uthread->uu_rval[0]));
++	if (pid == 1) {
++		extern void sweet_syscall_ret(int error, uint64_t rval);
++		sweet_syscall_ret(error, uthread->uu_rval[0]);
++	}
+ 	AUDIT_SYSCALL_EXIT(code, proc, uthread, error);
+ 
+ #if CONFIG_MACF
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 26ae23d..e8b1fd4 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -983,6 +983,68 @@ sweet_stamp_breadcrumb(unsigned step)
+ 	}
+ }
+ 
++/*
++ * 0149: which system call process 1 is sitting in.
++ *
++ * The panel keeps refreshing after the stall (row 7 flips at 1 Hz in every
++ * 100% photo), so the kernel scheduler is still running; it is a user process
++ * that is waiting for something that never comes.  Painting the call number on
++ * every entry means the last number on the panel when everything else stops
++ * moving is the call that never returned.  Only pid 1 is tracked, and only
++ * bits that changed are repainted, so this is a few rectangle fills per call,
++ * takes no locks (same path as the breadcrumb above, already called from
++ * unix_syscall with preemption off).
++ *
++ *   row 5 slots 0-9    syscall number, low 10 bits, blue = 1
++ *   row 5 slots 10-12  last return: 10 zero, 11 data, 12 errno (magenta)
++ *   row 6 slots 2-15   one cyan block per 256 calls (still alive)
++ */
++void
++sweet_syscall_note(unsigned code)
++{
++	static uint32_t last = 0xffffffffu;
++	static unsigned count;
++	unsigned i, bits;
++
++	count++;
++	if ((count & 0xffu) == 0) {
++		unsigned slot = 2u + ((count >> 8) & 0x7u);
++
++		if (slot == 2u) {
++			for (i = 2; i < 16; i++) {
++				sweet_stamp_block_at(6, i, 0xff000000u);
++			}
++		}
++		sweet_stamp_block_at(6, slot, 0xff00ffffu);
++	}
++	if (code == last) {
++		return;
++	}
++	last = code;
++	bits = code & 0x3ffu;
++	for (i = 0; i < 10; i++) {
++		sweet_stamp_block_at(5, i,
++		    (bits & (1u << i)) ? 0xff00a0ffu : 0xff000000u);
++	}
++}
++
++void
++sweet_syscall_ret(int error, uint64_t rval)
++{
++	static unsigned prev = 0xffffffffu;
++	unsigned slot = error ? 12u : (rval ? 11u : 10u);
++	unsigned i;
++
++	if (slot == prev) {
++		return;
++	}
++	prev = slot;
++	for (i = 0; i < 3; i++) {
++		sweet_stamp_block_at(5, 10 + i,
++		    (i == slot - 10u) ? 0xffff00ffu : 0xff000000u);
++	}
++}
++
+ static void
+ sweet_paint_thread(void *arg, wait_result_t wres)
+ {
+@@ -1730,6 +1792,14 @@ bsd_init(void)
+ 	}
+ #endif
+ 	sweet_stage(8);
++	{
++		/*
++		 * 0149: repeat the USB state here, at 100%, so it is on screen
++		 * next to the progress bar instead of having scrolled away.
++		 */
++		extern void sweet_usb_redump(void);
++		sweet_usb_redump();
++	}
+ 
+ #if 0 /* not yet */
+ 	consider_zone_gc(FALSE);
