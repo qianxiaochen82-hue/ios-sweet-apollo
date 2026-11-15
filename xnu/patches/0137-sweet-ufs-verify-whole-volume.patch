@@ -1,0 +1,154 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index dd114c4..dd46972 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -725,6 +725,126 @@ sweet_ufs_hash_block(uint64_t lba, const char *what)
+ 	printf("\n");
+ }
+ 
++/*
++ * Whole-volume check. Three sampled blocks only prove three blocks, so after
++ * the boot settles the reprint thread reads all 24 GiB back (1 MiB per
++ * READ(10) through the bounce buffer) and compares a total hash plus one hash
++ * per 1 GiB segment against the image's own. Read-only.
++ */
++#define SWEET_UFS_FULL_BLOCKS   6291456ull      /* 24 GiB */
++#define SWEET_UFS_SEG_BLOCKS    262144ull       /* 1 GiB */
++#define SWEET_UFS_SEGS          24
++#define SWEET_UFS_BULK_BLOCKS   (BOUNCE_SIZE / UFS_BLOCK)
++
++static const char *const sweet_ufs_seg_want[SWEET_UFS_SEGS] = {
++	"3c453653bed1d6bfea046fd99429a59aeaa28e8e05dee5bd26bb44ff8b673d02",
++	"2afddc53af693a21a8ac82226425f144685a75baabc2a654bd30f98d41ca611b",
++	"c8c9a5ce9875e7f61a665ceab5e28d185ca4e227cb3f5cb11a0c2c68620399a0",
++	"aaf54b8c5fcce72c3bb94d8b4b9113596ec37241ce65c8595acddfd05fed15f4",
++	"300b9754d7ef9944403187a08a8de9a3b94b02c124fa948127596411982bc99f",
++	"2001ea190028be904a566ba4208df7d3be5a07d59b054ebe22fab4f3caa18a66",
++	"363f227debe25aea632cd6e010aa4f11df080e7732001abe2295516cf53cdf1a",
++	"d641b0bea50b55542a0a5bb065f974f33cec71f35b0a8507a84e3126e0d82879",
++	"2b591d490ec85162bbbdada093b5bffd8fbbc163fb4cca25651ced6ae6f73d62",
++	"d68807f79bc99a3675b928e013489b259ccf3381c1aeec70cef67848ee75c9b0",
++	"d55e22feb850fe7874e4e27a920b585f47640d3d21f48e97ae47bfaa5f893dc7",
++	"584fb07cf92cb018bb113462979c612356ce5e638c4efe6b73fa5e717d0ba793",
++	"49bc20df15e412a64472421e13fe86ff1c5165e18b2afccf160d4dc19fe68a14",
++	"49bc20df15e412a64472421e13fe86ff1c5165e18b2afccf160d4dc19fe68a14",
++	"49bc20df15e412a64472421e13fe86ff1c5165e18b2afccf160d4dc19fe68a14",
++	"49bc20df15e412a64472421e13fe86ff1c5165e18b2afccf160d4dc19fe68a14",
++	"49bc20df15e412a64472421e13fe86ff1c5165e18b2afccf160d4dc19fe68a14",
++	"49bc20df15e412a64472421e13fe86ff1c5165e18b2afccf160d4dc19fe68a14",
++	"49bc20df15e412a64472421e13fe86ff1c5165e18b2afccf160d4dc19fe68a14",
++	"49bc20df15e412a64472421e13fe86ff1c5165e18b2afccf160d4dc19fe68a14",
++	"49bc20df15e412a64472421e13fe86ff1c5165e18b2afccf160d4dc19fe68a14",
++	"49bc20df15e412a64472421e13fe86ff1c5165e18b2afccf160d4dc19fe68a14",
++	"49bc20df15e412a64472421e13fe86ff1c5165e18b2afccf160d4dc19fe68a14",
++	"4d714cbe7d0192ab93cc43b9b9e076ade0666ce93d6729d46242337cc26bc260",
++};
++
++static const char sweet_ufs_full_want[] =
++    "ba3c164cebbab163fe1ab14b36757bd5f8847bc22acbbaf04156e6043b28b0c0";
++
++static char sweet_ufs_full_hex[65];
++static int sweet_ufs_bad_segs = -1;     /* -1 until the pass finishes */
++static int sweet_ufs_full_ok;
++
++static void
++sweet_ufs_hex(const uint8_t *d, char *out, size_t len)
++{
++	static const char hx[] = "0123456789abcdef";
++	size_t i;
++
++	for (i = 0; i < len; i++) {
++		out[i * 2] = hx[d[i] >> 4];
++		out[i * 2 + 1] = hx[d[i] & 0xf];
++	}
++	out[len * 2] = 0;
++}
++
++static void
++sweet_ufs_hash_volume(void)
++{
++	static SHA256_CTX seg[SWEET_UFS_SEGS];
++	static uint8_t total[32];
++	SHA256_CTX all;
++	uint64_t blk = 0;
++	char hex[65];
++	int bad = 0;
++	uint32_t i;
++
++	SHA256_Init(&all);
++	for (i = 0; i < SWEET_UFS_SEGS; i++) {
++		SHA256_Init(&seg[i]);
++	}
++	while (blk < SWEET_UFS_FULL_BLOCKS) {
++		const void *b = (const void *)(su.dma + DMA_BOUNCE);
++		uint64_t left = SWEET_UFS_FULL_BLOCKS - blk;
++		uint32_t n = left < SWEET_UFS_BULK_BLOCKS ?
++		    (uint32_t)left : (uint32_t)SWEET_UFS_BULK_BLOCKS;
++		int error;
++
++		lck_mtx_lock(&sweet_ufs_lock);
++		error = ufs_read_blocks(su.first_block + blk, n);
++		lck_mtx_unlock(&sweet_ufs_lock);
++		if (error != 0) {
++			printf("SWEET FSHA: read failed at block %llu (%d)\n", blk, error);
++			return;
++		}
++		SHA256_Update(&all, b, (size_t)n * UFS_BLOCK);
++		SHA256_Update(&seg[blk / SWEET_UFS_SEG_BLOCKS], b, (size_t)n * UFS_BLOCK);
++		blk += n;
++		if ((blk & ((4 * SWEET_UFS_SEG_BLOCKS) - 1)) == 0) {
++			printf("SWEET FSHA: progress %llu/24 GiB\n", blk >> 18);
++		}
++	}
++	SHA256_Final(total, &all);
++	sweet_ufs_hex(total, sweet_ufs_full_hex, 32);
++	sweet_ufs_full_ok = (strcmp(sweet_ufs_full_hex, sweet_ufs_full_want) == 0);
++	printf("SWEET FSHA: total %s\n", sweet_ufs_full_hex);
++	printf("SWEET FSHA: expect %s -> %s\n", sweet_ufs_full_want,
++	    sweet_ufs_full_ok ? "MATCH" : "MISMATCH");
++	for (i = 0; i < SWEET_UFS_SEGS; i++) {
++		uint8_t d[32];
++		char got[17], want[17];
++
++		SHA256_Final(d, &seg[i]);
++		sweet_ufs_hex(d, hex, 32);
++		if (strcmp(hex, sweet_ufs_seg_want[i]) == 0) {
++			continue;
++		}
++		memcpy(got, hex, 16);
++		got[16] = 0;
++		memcpy(want, sweet_ufs_seg_want[i], 16);
++		want[16] = 0;
++		printf("SWEET FSHA: seg %02u MISMATCH got %s want %s\n", i, got, want);
++		bad++;
++	}
++	sweet_ufs_bad_segs = bad;
++	printf("SWEET FSHA: %d of %d segments differ\n", bad, SWEET_UFS_SEGS);
++}
++
+ /*
+  * Re-print the evidence the probe already produced: by the time the screen is
+  * readable the originals are dozens of pages up, so this repeats them every
+@@ -738,6 +858,10 @@ sweet_ufs_reprint_thread(__unused void *arg, __unused wait_result_t wr)
+ {
+ 	uint64_t nblocks = sweet_ufs_probe_last - sweet_ufs_probe_first + 1;
+ 
++	/* Let the boot settle before spending a minute on 24 GiB of reads. */
++	(void)tsleep(&sweet_ufs_reprint_chan, PZERO, "ufsfull", hz * 20);
++	sweet_ufs_hash_volume();
++
+ 	for (;;) {
+ 		(void)tsleep(&sweet_ufs_reprint_chan, PZERO, "ufsreprint",
+ 		    hz * SWEET_UFS_REPRINT_SECS);
+@@ -749,6 +873,11 @@ sweet_ufs_reprint_thread(__unused void *arg, __unused wait_result_t wr)
+ 		sweet_ufs_hash_block(sweet_ufs_probe_first + 3145728, "middle");
+ 		sweet_ufs_hash_block(sweet_ufs_probe_first + 6291455, "last");
+ 		lck_mtx_unlock(&sweet_ufs_lock);
++		if (sweet_ufs_bad_segs >= 0) {
++			printf("SWEET FSHA: total %s %s, %d/%d segs differ\n",
++			    sweet_ufs_full_hex, sweet_ufs_full_ok ? "MATCH" : "MISMATCH",
++			    sweet_ufs_bad_segs, SWEET_UFS_SEGS);
++		}
+ 	}
+ }
+ 
