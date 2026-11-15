@@ -1,0 +1,157 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index dd46972..2ebcc15 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -122,15 +122,6 @@ static LCK_MTX_DECLARE(sweet_ufs_lock, &sweet_ufs_grp);
+ /* Set by sweet_ufs_probe(): attach and read the GPT, but start nothing. */
+ static bool sweet_ufs_probe_only;
+ 
+-/*
+- * The console ring scrolls the probe's evidence lines away long before the
+- * boot finishes, and photographing the screen is the only way to read them,
+- * so a probe-only boot re-prints the same lines every few seconds.
+- */
+-static int sweet_ufs_reprint_chan;
+-static char sweet_ufs_probe_name[64] = "userdata";
+-static uint64_t sweet_ufs_probe_first, sweet_ufs_probe_last;
+-
+ static inline uint32_t
+ ufs_rd(uint32_t off)
+ {
+@@ -663,9 +654,6 @@ sweet_ufs_init(void)
+ 	}
+ 	if (!error) {
+ 		error = ufs_find_partition(want);
+-		if (!error) {
+-			strlcpy(sweet_ufs_probe_name, want, sizeof(sweet_ufs_probe_name));
+-		}
+ 	}
+ 	lck_mtx_unlock(&sweet_ufs_lock);
+ 	if (error) {
+@@ -726,10 +714,12 @@ sweet_ufs_hash_block(uint64_t lba, const char *what)
+ }
+ 
+ /*
+- * Whole-volume check. Three sampled blocks only prove three blocks, so after
+- * the boot settles the reprint thread reads all 24 GiB back (1 MiB per
+- * READ(10) through the bounce buffer) and compares a total hash plus one hash
+- * per 1 GiB segment against the image's own. Read-only.
++ * Whole-volume check. Three sampled blocks only prove three blocks, so the
++ * probe reads all 24 GiB back (1 MiB per READ(10) through the bounce buffer)
++ * and compares a total hash plus one hash per 1 GiB segment against the
++ * image's own. Synchronous and read-only: it runs inside sweet_ufs_probe(),
++ * before bsd_init, because a kernel thread started that early never ran and
++ * the evidence has to reach the screen.
+  */
+ #define SWEET_UFS_FULL_BLOCKS   6291456ull      /* 24 GiB */
+ #define SWEET_UFS_SEG_BLOCKS    262144ull       /* 1 GiB */
+@@ -766,10 +756,6 @@ static const char *const sweet_ufs_seg_want[SWEET_UFS_SEGS] = {
+ static const char sweet_ufs_full_want[] =
+     "ba3c164cebbab163fe1ab14b36757bd5f8847bc22acbbaf04156e6043b28b0c0";
+ 
+-static char sweet_ufs_full_hex[65];
+-static int sweet_ufs_bad_segs = -1;     /* -1 until the pass finishes */
+-static int sweet_ufs_full_ok;
+-
+ static void
+ sweet_ufs_hex(const uint8_t *d, char *out, size_t len)
+ {
+@@ -790,10 +776,11 @@ sweet_ufs_hash_volume(void)
+ 	static uint8_t total[32];
+ 	SHA256_CTX all;
+ 	uint64_t blk = 0;
+-	char hex[65];
+-	int bad = 0;
++	char hex[65], full[65];
++	int bad = 0, ok;
+ 	uint32_t i;
+ 
++	printf("SWEET FSHA: begin\n");
+ 	SHA256_Init(&all);
+ 	for (i = 0; i < SWEET_UFS_SEGS; i++) {
+ 		SHA256_Init(&seg[i]);
+@@ -820,11 +807,11 @@ sweet_ufs_hash_volume(void)
+ 		}
+ 	}
+ 	SHA256_Final(total, &all);
+-	sweet_ufs_hex(total, sweet_ufs_full_hex, 32);
+-	sweet_ufs_full_ok = (strcmp(sweet_ufs_full_hex, sweet_ufs_full_want) == 0);
+-	printf("SWEET FSHA: total %s\n", sweet_ufs_full_hex);
++	sweet_ufs_hex(total, full, 32);
++	ok = (strcmp(full, sweet_ufs_full_want) == 0);
++	printf("SWEET FSHA: total %s\n", full);
+ 	printf("SWEET FSHA: expect %s -> %s\n", sweet_ufs_full_want,
+-	    sweet_ufs_full_ok ? "MATCH" : "MISMATCH");
++	    ok ? "MATCH" : "MISMATCH");
+ 	for (i = 0; i < SWEET_UFS_SEGS; i++) {
+ 		uint8_t d[32];
+ 		char got[17], want[17];
+@@ -841,46 +828,9 @@ sweet_ufs_hash_volume(void)
+ 		printf("SWEET FSHA: seg %02u MISMATCH got %s want %s\n", i, got, want);
+ 		bad++;
+ 	}
+-	sweet_ufs_bad_segs = bad;
+ 	printf("SWEET FSHA: %d of %d segments differ\n", bad, SWEET_UFS_SEGS);
+ }
+ 
+-/*
+- * Re-print the evidence the probe already produced: by the time the screen is
+- * readable the originals are dozens of pages up, so this repeats them every
+- * few seconds. Read-only, same lock as the probe, started only by
+- * sweet_ufs_probe().
+- */
+-#define SWEET_UFS_REPRINT_SECS  5
+-
+-static void
+-sweet_ufs_reprint_thread(__unused void *arg, __unused wait_result_t wr)
+-{
+-	uint64_t nblocks = sweet_ufs_probe_last - sweet_ufs_probe_first + 1;
+-
+-	/* Let the boot settle before spending a minute on 24 GiB of reads. */
+-	(void)tsleep(&sweet_ufs_reprint_chan, PZERO, "ufsfull", hz * 20);
+-	sweet_ufs_hash_volume();
+-
+-	for (;;) {
+-		(void)tsleep(&sweet_ufs_reprint_chan, PZERO, "ufsreprint",
+-		    hz * SWEET_UFS_REPRINT_SECS);
+-		lck_mtx_lock(&sweet_ufs_lock);
+-		printf("SWEET GPT: \"%s\" LBA 0x%llx..0x%llx, %llu blocks = %llu MiB, %llu BSD sectors\n",
+-		    sweet_ufs_probe_name, sweet_ufs_probe_first, sweet_ufs_probe_last,
+-		    nblocks, nblocks * UFS_BLOCK >> 20, nblocks * UFS_BLOCK >> 9);
+-		sweet_ufs_hash_block(sweet_ufs_probe_first, "first");
+-		sweet_ufs_hash_block(sweet_ufs_probe_first + 3145728, "middle");
+-		sweet_ufs_hash_block(sweet_ufs_probe_first + 6291455, "last");
+-		lck_mtx_unlock(&sweet_ufs_lock);
+-		if (sweet_ufs_bad_segs >= 0) {
+-			printf("SWEET FSHA: total %s %s, %d/%d segs differ\n",
+-			    sweet_ufs_full_hex, sweet_ufs_full_ok ? "MATCH" : "MISMATCH",
+-			    sweet_ufs_bad_segs, SWEET_UFS_SEGS);
+-		}
+-	}
+-}
+-
+ /*
+  * Boot-arg gated read-only probe for rd=md0 boots: the UFS root path never
+  * runs there, so this is the only way to prove the controller can be taken
+@@ -895,10 +845,6 @@ sweet_ufs_probe(void)
+ 	sweet_ufs_probe_only = true;
+ 	error = sweet_ufs_init();
+ 	if (!error) {
+-		thread_t thread;
+-
+-		sweet_ufs_probe_first = su.first_block;
+-		sweet_ufs_probe_last = su.first_block + su.nblocks - 1;
+ 		lck_mtx_lock(&sweet_ufs_lock);
+ 		sweet_ufs_hash_block(su.first_block, "first");
+ 		/* The image is 24 GiB = 6291456 blocks, so these two are the
+@@ -907,9 +853,7 @@ sweet_ufs_probe(void)
+ 		sweet_ufs_hash_block(su.first_block + 3145728, "middle");
+ 		sweet_ufs_hash_block(su.first_block + 6291455, "last");
+ 		lck_mtx_unlock(&sweet_ufs_lock);
+-		if (kernel_thread_start(sweet_ufs_reprint_thread, NULL, &thread) == KERN_SUCCESS) {
+-			thread_deallocate(thread);
+-		}
++		sweet_ufs_hash_volume();
+ 	}
+ 	printf("SWEET UFS: read-only probe %s (%d)\n", error ? "failed" : "ok", error);
+ 	return error;
