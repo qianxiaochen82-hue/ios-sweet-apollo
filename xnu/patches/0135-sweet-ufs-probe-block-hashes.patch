@@ -1,0 +1,58 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index a68d459..8260c6f 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -38,6 +38,7 @@
+ #include <pexpert/pexpert.h>
+ #include <pexpert/device_tree.h>
+ #include <libkern/libkern.h>
++#include <libkern/crypto/sha2.h>
+ #include <machine/atomic.h>
+ 
+ extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
+@@ -687,6 +688,31 @@ sweet_ufs_init(void)
+ 	return 0;
+ }
+ 
++/*
++ * SHA-256 of one 4 KiB device block, so a flash can be verified byte for byte
++ * against the host image without trusting anything in between.
++ */
++static void
++sweet_ufs_hash_block(uint64_t lba, const char *what)
++{
++	uint8_t digest[32];
++	SHA256_CTX ctx;
++	int i;
++
++	if (ufs_read_blocks(lba, 1) != 0) {
++		printf("SWEET HASH: %s LBA 0x%llx unreadable\n", what, lba);
++		return;
++	}
++	SHA256_Init(&ctx);
++	SHA256_Update(&ctx, (const void *)(su.dma + DMA_BOUNCE), UFS_BLOCK);
++	SHA256_Final(digest, &ctx);
++	printf("SWEET HASH: %s LBA 0x%llx ", what, lba);
++	for (i = 0; i < 32; i++) {
++		printf("%02x", digest[i]);
++	}
++	printf("\n");
++}
++
+ /*
+  * Boot-arg gated read-only probe for rd=md0 boots: the UFS root path never
+  * runs there, so this is the only way to prove the controller can be taken
+@@ -700,6 +726,13 @@ sweet_ufs_probe(void)
+ 
+ 	sweet_ufs_probe_only = true;
+ 	error = sweet_ufs_init();
++	if (!error) {
++		lck_mtx_lock(&sweet_ufs_lock);
++		sweet_ufs_hash_block(su.first_block, "first");
++		sweet_ufs_hash_block(su.first_block + su.nblocks / 2, "middle");
++		sweet_ufs_hash_block(su.first_block + su.nblocks - 1, "last");
++		lck_mtx_unlock(&sweet_ufs_lock);
++	}
+ 	printf("SWEET UFS: read-only probe %s (%d)\n", error ? "failed" : "ok", error);
+ 	return error;
+ }
