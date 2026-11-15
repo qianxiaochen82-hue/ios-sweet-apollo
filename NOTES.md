@@ -73,6 +73,63 @@
   `qcom,gpios-disallowed = <2 4 5 8>`). Still read-only. Image:
   `shim/out/shim-boot.apollo-embed-keys0132.img`, 35,192,832 B, SHA-256
   `2EA03DB1A25537B2071A5CE3C7AB2F6DA37BA4C531CB859DAAE75DC49ADA38ED`.
+- **Volume-up works** (boot of 0132, 2026-11-15): `key=1 down=1 gpio6=0` then
+  `SWEET HID: key 0x0e9 down/up`, pairing with 0x0ea for volume-down. 0133
+  (`tools/mk-keys-quiet-patch.py`) removed the temporary spam (the 2 s gpio6
+  reprint, the 5 s KEYSDBG reprint, the pin/ppid/apid table); KEYSDBG is
+  change-only again and the bootstrap cmdline no longer sets sweetkeydebug.
+  Key polling and HID reporting are untouched. Image
+  `shim/out/shim-boot.apollo-embed-keys0133.img`, 35,192,832 B, SHA-256
+  `538DD542AD70D6F016CB8C0727B0CC22390381D38AEA8901DE9DAEA583374F50`.
+
+### UFS root volume on apollo (prep only, nothing written)
+
+**GPT, verified offline** with `tools/check-apollo-gpt.py apollo-backup
+--image-size 24G` (uses the `*_gpt_{primary,backup}_34x4096.bin` dumps, no
+device): all six LUNs pass - primary and backup header CRCs, both entry array
+CRCs, reciprocal my/alt LBAs, identical partition tables, no overlaps, every
+partition inside the usable range.
+- sda (LUN 0) is 4 KiB-per-LBA: primary @1 alt=30935039, backup @30935039 alt=1,
+  usable 6..30935034.
+- `userdata` = LBA4k 2883584..30935034 = 28,051,451 x 4 KiB = 107.01 GiB
+  (224,411,608 x 512 B as the BSD layer sees it).
+- A 24 GiB image = 6,291,456 x 4 KiB, so ~83 GiB of headroom.
+
+**Build (Linux host: apfs-fuse + hfsprogs + rsync), 24 GiB, 4K blocks**
+
+    HFS_BLOCK=4096 tools/mkiosroot.sh OS.dmg SYSTEMOS.dmg APPOS.dmg \
+        apollo-root-24g.img 24G
+
+`HFS_BLOCK` is a new optional knob (unset = old behaviour) so the HFS+ volume's
+allocation blocks match the device's 4 KiB logical blocks; the volume is
+journaled (`-J`), case-sensitive (`-s`), named iOSRoot. The script lays down
+/System from OS.dmg, /System/Cryptexes/OS from SYSTEMOS.dmg and
+/System/Cryptexes/App from APPOS.dmg, keeps the dyld shared cache as hardlinks
+(`rsync -aH`), adds systembag.kb, the logd tree and the patched launchd plists.
+**Blocker:** this Windows box has no IPSW and no OS/SYSTEMOS/APPOS dmg (only
+the 8/16 MB early root-hfs experiments), and the script needs the Linux tools.
+
+**Device side needs no new code.** The UFS root path is already in the tree:
+`sweet_ufs.c` (0028/0030/0069) finds the GPT partition by name, does polled
+READ(10) in 4 KiB device blocks, exposes 512-byte BSD sectors as `ufsroot0`,
+and honours `rd=ufsroot0`, `ufsroot=userdata`, `ufsrw=1`, `ufscache=1`,
+`ufswait=1`, `ufslogsecs`. Writes are refused unless `ufsrw=1` and are
+re-checked against the partition bounds. `sweetufs=1` (0126/0127) is the
+read-only probe: take the controller over, read LUN 0's GPT and the named
+partition, then stop - nothing is written.
+
+**Pre-flash checklist** (flashing needs an explicit go-ahead from the user):
+1. `python tools/check-apollo-gpt.py apollo-backup --image-size 24G` all green.
+2. Image size <= 107.01 GiB, 4 KiB aligned, tail zero-padded to a 4 KiB edge.
+3. `fsck.hfsplus -n` clean; volume header says journaled, case-sensitive,
+   block size 4096, name iOSRoot.
+4. On the phone with `sweetufs=1` (read-only): GPT + userdata bounds must match
+   the offline dump above.
+5. Transport: `img2simg` to a sparse image, `fastboot flash userdata` (chunked
+   by max-download-size), or dd to the by-name node from a Linux host.
+6. After writing, read back the first, middle and last 4 KiB and compare.
+7. Rollback: userdata is destroyed by this - the old Android user data is not
+   recoverable, which the user has already accepted.
 
 ## Agent handoff / active work (2026-10-15, latest)
 

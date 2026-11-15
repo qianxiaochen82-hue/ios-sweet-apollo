@@ -21,6 +21,10 @@ set -euo pipefail
 [[ $# -ge 4 ]] || { sed -n '2,12p' "$0"; exit 2; }
 os=$(realpath "$1") sysos=$(realpath "$2") appos=$(realpath "$3") out=$4 size=${5:-16G}
 [[ ! -e $out ]] || { echo "refusing to overwrite $out" >&2; exit 1; }
+# apollo (SM8250) exposes the UFS with 4 KiB logical blocks: set HFS_BLOCK=4096
+# so the volume's allocation blocks match the device's write granularity.
+hfs_block=()
+[[ -n ${HFS_BLOCK:-} ]] && hfs_block=(-b "$HFS_BLOCK")
 
 # Pre-flight tool check
 missing_tools=()
@@ -72,7 +76,7 @@ apfs_mount "$sysos" sysos
 apfs_mount "$appos" appos
 
 truncate -s "$size" "$out"
-mkfs.hfsplus -s -J -v iOSRoot "$out"
+mkfs.hfsplus -s -J "${hfs_block[@]}" -v iOSRoot "$out"
 mkdir "$work/root"
 sudo mount -t hfsplus -o loop,force "$out" "$work/root"
 mounts=("$work/root" "${mounts[@]}")
