@@ -1,0 +1,31 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index db856b0..a68d459 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -324,6 +324,13 @@ ufs_find_partition(const char *want)
+ 		printf("SWEET UFS: unsupported GPT entries %u x %u\n", nent, esz);
+ 		return ENXIO;
+ 	}
++	/* Header geometry, before the bounce buffer is reused for the entries. */
++	uint64_t my_lba, alt_lba;
++	memcpy(&my_lba, b + 24, 8);
++	memcpy(&alt_lba, b + 32, 8);
++	printf("SWEET GPT: LUN %u header at 0x%llx, alt 0x%llx, disk %llu MiB (%llu GiB), %u x %u entries\n",
++	    su.lun, my_lba, alt_lba, (alt_lba + 1) * UFS_BLOCK >> 20,
++	    (alt_lba + 1) * UFS_BLOCK >> 30, nent, esz);
+ 	error = ufs_read_blocks(entry_lba, (nent * esz + UFS_BLOCK - 1) / UFS_BLOCK);
+ 	if (error) {
+ 		return error;
+@@ -351,6 +358,12 @@ ufs_find_partition(const char *want)
+ 		}
+ 		su.first_block = first;
+ 		su.nblocks = last - first + 1;
++		printf("SWEET GPT: \"%s\" LBA 0x%llx..0x%llx, %llu blocks = %llu MiB, %llu BSD sectors\n",
++		    name, first, last, su.nblocks, su.nblocks * UFS_BLOCK >> 20,
++		    su.nblocks * UFS_BLOCK >> 9);
++		/* The 24 GiB root image is 6291456 4 KiB blocks. */
++		printf("SWEET GPT: 24 GiB image (6291456 blocks) %s the partition\n",
++		    su.nblocks >= 6291456 ? "fits" : "DOES NOT FIT");
+ 		return 0;
+ 	}
+ 	printf("SWEET UFS: no GPT partition named \"%s\"\n", want);
