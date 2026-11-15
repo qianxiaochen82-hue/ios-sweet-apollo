@@ -1,5 +1,5 @@
 diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
-index a68d459..8260c6f 100644
+index a68d459..fffe60e 100644
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
 @@ -38,6 +38,7 @@
@@ -42,15 +42,18 @@ index a68d459..8260c6f 100644
  /*
   * Boot-arg gated read-only probe for rd=md0 boots: the UFS root path never
   * runs there, so this is the only way to prove the controller can be taken
-@@ -700,6 +726,13 @@ sweet_ufs_probe(void)
+@@ -700,6 +726,16 @@ sweet_ufs_probe(void)
  
  	sweet_ufs_probe_only = true;
  	error = sweet_ufs_init();
 +	if (!error) {
 +		lck_mtx_lock(&sweet_ufs_lock);
 +		sweet_ufs_hash_block(su.first_block, "first");
-+		sweet_ufs_hash_block(su.first_block + su.nblocks / 2, "middle");
-+		sweet_ufs_hash_block(su.first_block + su.nblocks - 1, "last");
++		/* The image is 24 GiB = 6291456 blocks, so these two are the
++		 * middle and last block of what was written, not of the whole
++		 * 107 GiB partition. */
++		sweet_ufs_hash_block(su.first_block + 3145728, "middle");
++		sweet_ufs_hash_block(su.first_block + 6291455, "last");
 +		lck_mtx_unlock(&sweet_ufs_lock);
 +	}
  	printf("SWEET UFS: read-only probe %s (%d)\n", error ? "failed" : "ok", error);
