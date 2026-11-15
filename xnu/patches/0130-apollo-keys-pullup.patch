@@ -1,0 +1,115 @@
+diff --git a/bsd/dev/apollo_keys.c b/bsd/dev/apollo_keys.c
+--- a/bsd/dev/apollo_keys.c
++++ b/bsd/dev/apollo_keys.c
+@@ -93,6 +93,93 @@
+ 		delay(1);
+ 	}
+ 	return false;
++}
++
++/*
++ * Write one aligned word through the same observer channel keys_read uses:
++ * EXT_WRITEL (opcode 0) takes the data from WDATA and reports via STATUS.  The
++ * wait is capped at about a millisecond and never retried, so a wedged arbiter
++ * only costs the write instead of hanging the boot.
++ */
++static bool
++keys_write32(uint16_t apid, uint16_t addr, uint32_t value)
++{
++	if (apid == KEYS_NO_APID || (addr & 3u)) {
++		return false;
++	}
++	uint32_t off = 0x80u * apid;
++	*(volatile uint32_t *)(keys_obs + off + 0x10u) = value;
++	__asm__ volatile("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(keys_obs + off) = (uint32_t)(addr & 0xffu) << 4;
++	__asm__ volatile("dsb osh" ::: "memory");
++	for (unsigned i = 0; i < 2; ++i) {
++		keys_last_status = keys_rd(keys_obs, off + 0x08u);
++		if (keys_last_status & 1u) {
++			return (keys_last_status & 0x0eu) == 0;
++		}
++		delay(1);
++	}
++	return false;
++}
++
++/*
++ * Boot-arg sweetkeys_cfg=1: the pin is enabled and its level tracks the key,
++ * but DIG_PULL_CTL is 0 (no bias), so the released state floats.  Set the
++ * pull-up and nothing else: one aligned 4-byte EXT_WRITEL over MODE/VIN/PULL/IN
++ * with the values just read back.  Validate the identity first and give up
++ * loudly on any mismatch.
++ */
++static int keys_cfg;
++
++static void
++keys_gpio6_pullup(void)
++{
++	static const uint8_t off[] = { 0x04u, 0x05u, 0x40u, 0x41u,
++	    0x42u, 0x43u, 0x45u, 0x46u };
++	uint8_t v[8];
++	bool ok[8];
++
++	for (unsigned i = 0; i < 8; ++i) {
++		v[i] = 0;
++		ok[i] = keys_read(keys_gpio_apid,
++		    (uint16_t)(KEYS_GPIO6 + off[i]), &v[i]);
++	}
++	if (!ok[0] || v[0] != 0x10u || !ok[1] || (v[1] != 0x10u && v[1] != 0x11u)) {
++		printf("SWEET KEYS(apollo): cfg skip type=%#x/%d sub=%#x/%d\n",
++		    v[0], ok[0], v[1], ok[1]);
++		return;
++	}
++	if (!ok[7] || !(v[7] & 0x80u)) {
++		printf("SWEET KEYS(apollo): cfg skip not enabled en=%#x/%d\n",
++		    v[7], ok[7]);
++		return;
++	}
++	if (!ok[2] || !ok[3] || !ok[4] || !ok[5]) {
++		printf("SWEET KEYS(apollo): cfg skip mode/vin/pull/in unreadable\n");
++		return;
++	}
++	if (v[4] != 0) {
++		printf("SWEET KEYS(apollo): cfg pull already %#x, nothing to do\n",
++		    v[4]);
++		return;
++	}
++	uint32_t word = (uint32_t)v[2] | ((uint32_t)v[3] << 8) |
++	    (0x03u << 16) | ((uint32_t)v[5] << 24);
++	bool wok = keys_write32(keys_gpio_apid, (uint16_t)(KEYS_GPIO6 + 0x40u), word);
++	printf("SWEET KEYS(apollo): cfg write 0x40=%#x ok=%d status=%#x\n",
++	    word, wok, keys_last_status);
++	uint8_t again[7];
++	bool aok[7];
++
++	for (unsigned i = 0; i < 7; ++i) {
++		again[i] = 0;
++		aok[i] = keys_read(keys_gpio_apid,
++		    (uint16_t)(KEYS_GPIO6 + 0x40u + i), &again[i]);
++	}
++	printf("SWEET KEYS(apollo): cfg after mode=%#x/%d vin=%#x/%d pull=%#x/%d "
++	    "in=%#x/%d out=%#x/%d en=%#x/%d\n",
++	    again[0], aok[0], again[1], aok[1], again[2], aok[2], again[3],
++	    aok[3], again[5], aok[5], again[6], aok[6]);
+ }
+ 
+ /*
+@@ -244,6 +331,7 @@
+ 	keys_started = true;
+ 	(void)PE_parse_boot_argn("sweetkeys", &enabled, sizeof(enabled));
+ 	(void)PE_parse_boot_argn("sweetkeydebug", &keys_debug, sizeof(keys_debug));
++	(void)PE_parse_boot_argn("sweetkeys_cfg", &keys_cfg, sizeof(keys_cfg));
+ 	if (!enabled) {
+ 		printf("SWEET KEYS(apollo): disabled (sweetkeys=0)\n");
+ 		return;
+@@ -280,6 +368,9 @@
+ 		keys_dump_map(count);
+ 	}
+ 	keys_dump_gpio6(gpio);
++	if (keys_cfg) {
++		keys_gpio6_pullup();
++	}
+ 	kern_return_t kr = kernel_thread_start(keys_thread, NULL, &thread);
+ 	if (kr == KERN_SUCCESS) {
+ 		thread_deallocate(thread);
