@@ -1,0 +1,70 @@
+diff --git a/bsd/dev/arm/systemcalls.c b/bsd/dev/arm/systemcalls.c
+index 7fd9be1..a337cc3 100644
+--- a/bsd/dev/arm/systemcalls.c
++++ b/bsd/dev/arm/systemcalls.c
+@@ -100,6 +100,11 @@ unix_syscall(
+ 
+ 	uthread_reset_proc_refcount(uthread);
+ 
++	{
++		extern void sweet_stamp_breadcrumb(unsigned step);      /* bsd/kern/bsd_init.c */
++		sweet_stamp_breadcrumb(8);
++	}
++
+ 	code = arm_get_syscall_number(state);
+ 
+ #define unix_syscall_kprintf(x...)      /* kprintf("unix_syscall: " x) */
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index c07c314..b9976de 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -913,6 +913,7 @@ sweet_stage_thread(void *arg, wait_result_t wres)
+ 		if ((tick % 6) == 0) {
+ 			extern void sweet_usb_redump(void);
+ 			sweet_usb_redump();
++			sweet_stamp_breadcrumb(9);
+ 		}
+ 	}
+ }
+@@ -963,15 +964,22 @@ sweet_stamp_ufs_fault(uint32_t n, uint32_t color)
+  * step, so the last lit slot is exactly where the machine stopped:
+  *   8 bsd_init done      9 back in kernel_bootstrap   10 pre vm_pageout
+  *   11 bsdinit_task      12 before load_init_program  13 launchd exec'd
+- *   14 load_init_program returned (should not happen)
++ *   14 load_init_program returned
++ *
++ * 0145: 0144 showed all seven, so the kernel side is done and the machine
++ * stops on the way back to user mode.  Steps 7-9 are magenta on row 6:
++ *   7  bsd_ast() after bsdinit_task() returned (about to go to user mode)
++ *   8  first unix_syscall(), i.e. launchd is really executing
++ *   9  sweet_usb_redump() returned at tick 6 (the 30 s stall is known)
+  */
+ void
+ sweet_stamp_breadcrumb(unsigned step)
+ {
+-	if (step > 6) {
+-		return;
++	if (step <= 7) {
++		sweet_stamp_block_at(8, 8 + step, 0xff00ff00u);
++	} else if (step <= 9) {
++		sweet_stamp_block_at(6, step - 8, 0xffff00ffu);
+ 	}
+-	sweet_stamp_block_at(8, 8 + step, 0xff00ff00u);
+ }
+ 
+ static void
+diff --git a/bsd/kern/kern_sig.c b/bsd/kern/kern_sig.c
+index ca53f9b..e71861c 100644
+--- a/bsd/kern/kern_sig.c
++++ b/bsd/kern/kern_sig.c
+@@ -3402,6 +3402,10 @@ bsd_ast(thread_t thread)
+ 	if (!bsd_init_done) {
+ 		bsd_init_done = 1;
+ 		bsdinit_task();
++		{
++			extern void sweet_stamp_breadcrumb(unsigned step);      /* bsd/kern/bsd_init.c */
++			sweet_stamp_breadcrumb(7);
++		}
+ 	}
+ }
+ 
