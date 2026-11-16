@@ -1,28 +1,21 @@
 diff --git a/bsd/conf/files b/bsd/conf/files
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -381,7 +381,8 @@
- bsd/kern/kern_credential.c		standard
- bsd/kern/kern_crossarch.c		standard
- bsd/kern/kern_cs.c			standard
+@@ -384,1 +384,2 @@
  bsd/kern/sweet_amfi.c			standard
 +bsd/kern/sweet_sandbox.c		standard
- bsd/kern/kern_csr.c			optional config_csr
- bsd/kern/kern_debug.c			standard
- bsd/kern/kern_symfile.c			standard
 diff --git a/bsd/kern/sweet_amfi.c b/bsd/kern/sweet_amfi.c
 --- a/bsd/kern/sweet_amfi.c
 +++ b/bsd/kern/sweet_amfi.c
-@@ -320,6 +320,8 @@
+@@ -285,6 +285,7 @@
   */
  static uint64_t sweet_sandbox_seen;
  
 +extern int sweet_sandbox_container_path(user_addr_t arg);   /* sweet_sandbox.c */
-+
  static int
  sweet_sandbox_syscall(struct proc *p, int call, __unused user_addr_t arg)
  {
-@@ -328,7 +330,8 @@ sweet_sandbox_syscall(struct proc *p, int call, __unused user_addr_t arg)
+@@ -295,7 +296,8 @@ sweet_sandbox_syscall(struct proc *p, int call, __unused user_addr_t arg)
  		printf("SWEET Sandbox: %s op %d\n", name, call);
  	}
  	switch (call) {
@@ -36,7 +29,7 @@ diff --git a/bsd/kern/sweet_sandbox.c b/bsd/kern/sweet_sandbox.c
 new file mode 100644
 --- /dev/null
 +++ b/bsd/kern/sweet_sandbox.c
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,117 @@
 +/*
 + * Sandbox request 4: "the container path of a process".
 + *
@@ -62,6 +55,7 @@ new file mode 100644
 +#include <sys/proc_internal.h>
 +#include <sys/systm.h>
 +#include <kern/task.h>
++#include <libkern/libkern.h>
 +#include <mach/vm_param.h>
 +#include <vm/vm_kern.h>
 +#include <vm/vm_map.h>
