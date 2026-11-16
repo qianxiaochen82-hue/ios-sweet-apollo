@@ -1,0 +1,82 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -3094,10 +3094,13 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+ 	int error = 0;
+ 	struct persona *persona = NULL;
+ 
+-	if (!IOCurrentTaskHasEntitlement( PERSONA_MGMT_ENTITLEMENT)) {
+-		return EPERM;
+-	}
+-
++	/*
++	 * SWEET: nothing here is signed and AMFI is a stand-in, so no process
++	 * carries PERSONA_MGMT_ENTITLEMENT; and no persona is ever created, so
++	 * persona_lookup() below always fails. Both refusals are removed. The
++	 * group count check still means something; spawn_persona_adopt() still
++	 * applies the credential the caller asked for.
++	 */
+ 	if (px_persona->pspi_flags & POSIX_SPAWN_PERSONA_GROUPS) {
+ 		if (px_persona->pspi_ngroups > NGROUPS_MAX) {
+ 			return EINVAL;
+@@ -3105,12 +3108,6 @@ spawn_validate_persona(struct _posix_spawn_persona_info *px_persona)
+ 	}
+ 
+ 	persona = persona_lookup(px_persona->pspi_id);
+-	if (!persona) {
+-		error = ESRCH;
+-		goto out;
+-	}
+-
+-out:
+ 	if (persona) {
+ 		persona_put(persona);
+ 	}
+@@ -3130,9 +3127,6 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
+ 	 * the kauth with a different UID/GID combo
+ 	 */
+ 	persona = persona_lookup(px_persona->pspi_id);
+-	if (!persona) {
+-		return ESRCH;
+-	}
+ 
+ 	cred = kauth_cred_proc_ref(p);
+ 
+@@ -3158,6 +3152,47 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
+ 		    px_persona->pspi_gmuid);
+ 	}
+ 
++	if (persona == NULL) {
++		/*
++		 * SWEET: there are no personas here, so the lookup above failed.
++		 * What the caller is after is the credential it asked for, and the
++		 * branches above have already put it on cred. Apply it to the new
++		 * process, and keep the per-uid process count straight the way
++		 * persona_proc_adopt() does: fork1() counted this process under the
++		 * parent's uid, and its exit will take it off under the uid it has
++		 * now. Without the pair of chgproccnt() calls below every spawn into
++		 * another uid silently drains that uid's count, and the next exit of
++		 * one of its processes panics ("chgproccnt: lost user").
++		 */
++		__block kauth_cred_t new_cred = cred;
++		__block uid_t old_ruid = KAUTH_UID_NONE;
++		uid_t new_ruid = kauth_cred_getruid(cred);
++
++		(void)proc_update_label(p, true, ^kauth_cred_t (kauth_cred_t cur_cred) {
++			old_ruid = kauth_cred_getruid(cur_cred);
++			if (new_cred != cur_cred) {
++				kauth_cred_ref(new_cred);
++				kauth_cred_unref(&cur_cred);
++			}
++			return new_cred;
++		});
++		kauth_cred_unref(&cred);
++		if (old_ruid != KAUTH_UID_NONE && old_ruid != new_ruid) {
++			(void)chgproccnt(new_ruid, 1);
++			(void)chgproccnt(old_ruid, -1);
++		}
++		return 0;
++	}
++
+ 	ret = persona_proc_adopt(p, persona, cred);
+ 
+ 	kauth_cred_unref(&cred);
