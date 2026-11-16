@@ -41,7 +41,7 @@
  
  	cred = kauth_cred_proc_ref(p);
  
-@@ -3158,6 +3152,47 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
+@@ -3158,6 +3152,38 @@ spawn_persona_adopt(proc_t p, struct _posix_spawn_persona_info *px_persona)
  		    px_persona->pspi_gmuid);
  	}
  

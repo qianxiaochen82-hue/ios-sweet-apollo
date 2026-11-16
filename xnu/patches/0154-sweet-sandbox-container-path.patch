@@ -1,7 +1,7 @@
 diff --git a/bsd/conf/files b/bsd/conf/files
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -381,6 +381,7 @@
+@@ -381,7 +381,8 @@
  bsd/kern/kern_credential.c		standard
  bsd/kern/kern_crossarch.c		standard
  bsd/kern/kern_cs.c			standard
@@ -13,7 +13,7 @@ diff --git a/bsd/conf/files b/bsd/conf/files
 diff --git a/bsd/kern/sweet_amfi.c b/bsd/kern/sweet_amfi.c
 --- a/bsd/kern/sweet_amfi.c
 +++ b/bsd/kern/sweet_amfi.c
-@@ -320,7 +320,9 @@
+@@ -320,6 +320,8 @@
   */
  static uint64_t sweet_sandbox_seen;
  
